@@ -614,9 +614,14 @@ export class PluginManager {
     for (const instance of this.plugins.values()) {
       pluginConfigs[instance.manifest.name] = this.getPluginConfig(instance.manifest.name);
       pluginStates[instance.manifest.name] = { ...instance.publishedState };
+      const isActive = instance.state === 'active';
 
-      if ((instance.state === 'error' || instance.state === 'disabled') && instance.manifest.required) {
+      if (!isActive && instance.manifest.required) {
         requiredPluginsReady = false;
+      }
+
+      if (!isActive) {
+        continue;
       }
 
       banners.push(...instance.uiBanners);
@@ -629,7 +634,7 @@ export class PluginManager {
       threadDecorations.push(...instance.threadDecorations);
       notifications.push(...instance.notifications.filter((notification) => notification.visible));
 
-      if (instance.state !== 'disabled' && instance.state !== 'error' && instance.rendererBuild) {
+      if (instance.rendererBuild) {
         rendererScripts.push(...instance.rendererBuild.scripts);
         rendererStyles.push(...instance.rendererBuild.styles);
       }
