@@ -5,7 +5,14 @@ import { getPluginComponent } from './PluginComponentRegistry';
 import { useConfig } from '@/providers/ConfigProvider';
 
 export const PluginBannerSlot: FC = () => {
-  const { uiState, sendBannerAction, getResolvedPluginConfig, getPluginState } = usePlugins();
+  const {
+    uiState,
+    sendBannerAction,
+    getResolvedPluginConfig,
+    getPluginState,
+    hasRendererScript,
+    getPluginRendererStatus,
+  } = usePlugins();
   const { config, updateConfig } = useConfig();
 
   if (!uiState) return null;
@@ -19,6 +26,9 @@ export const PluginBannerSlot: FC = () => {
         // If the banner has a custom component, render it
         if (banner.component) {
           const Component = getPluginComponent(banner.pluginName, banner.component);
+          const waitingForRenderer = !Component
+            && hasRendererScript(banner.pluginName)
+            && getPluginRendererStatus(banner.pluginName) !== 'error';
           if (Component) {
             return (
               <Component
@@ -31,6 +41,16 @@ export const PluginBannerSlot: FC = () => {
                 pluginConfig={getResolvedPluginConfig(banner.pluginName)}
                 pluginState={getPluginState(banner.pluginName)}
               />
+            );
+          }
+          if (waitingForRenderer) {
+            return (
+              <div
+                key={`${banner.pluginName}-${banner.id}`}
+                className="rounded-lg border border-border/70 bg-card/30 px-3 py-2 text-xs text-muted-foreground"
+              >
+                Loading plugin UI for "{banner.pluginName}"...
+              </div>
             );
           }
         }

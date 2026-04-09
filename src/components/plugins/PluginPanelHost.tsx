@@ -15,11 +15,23 @@ export const PluginPanelHost: FC<{
   onClose: () => void;
 }> = ({ panel, onClose }) => {
   const { config, updateConfig } = useConfig();
-  const { sendAction, setPluginConfig, getResolvedPluginConfig, getPluginState, rendererLoadCount } = usePlugins();
+  const {
+    sendAction,
+    setPluginConfig,
+    getResolvedPluginConfig,
+    getPluginState,
+    rendererLoadCount,
+    hasRendererScript,
+    getPluginRendererStatus,
+    getPluginRendererError,
+  } = usePlugins();
 
   void rendererLoadCount;
 
   const Component = getPluginComponent(panel.pluginName, panel.component);
+  const rendererStatus = getPluginRendererStatus(panel.pluginName);
+  const rendererError = getPluginRendererError(panel.pluginName);
+  const waitingForRenderer = !Component && hasRendererScript(panel.pluginName) && rendererStatus !== 'error';
   const widthClass = widthClassMap[panel.width ?? 'default'];
 
   return (
@@ -57,6 +69,14 @@ export const PluginPanelHost: FC<{
                 await setPluginConfig(panel.pluginName, path, value);
               }}
             />
+          ) : waitingForRenderer ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
+              Loading plugin UI for "{panel.pluginName}"...
+            </div>
+          ) : rendererError ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
+              Failed to load the plugin UI for "{panel.pluginName}": {rendererError}
+            </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
               Plugin component "{panel.component}" is not registered for "{panel.pluginName}".

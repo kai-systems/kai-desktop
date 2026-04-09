@@ -63,7 +63,15 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
   const [activeSection, setActiveSection] = useState<string>('models');
   const { config, updateConfig } = useConfig();
   const pluginSections = usePluginSettingsSections();
-  const { setPluginConfig, sendAction, getResolvedPluginConfig, getPluginState } = usePlugins();
+  const {
+    setPluginConfig,
+    sendAction,
+    getResolvedPluginConfig,
+    getPluginState,
+    hasRendererScript,
+    getPluginRendererStatus,
+    getPluginRendererError,
+  } = usePlugins();
   const sortedPluginSections = [...pluginSections].sort((a, b) => a.priority - b.priority);
   const hasPluginSections = sortedPluginSections.length > 0;
 
@@ -156,7 +164,27 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
         {pluginSections.map((pluginSection) => {
           if (activeSection !== pluginSection.key) return null;
           const Component = getPluginComponent(pluginSection.pluginName, pluginSection.component);
-          if (!Component) return null;
+          const rendererStatus = getPluginRendererStatus(pluginSection.pluginName);
+          const rendererError = getPluginRendererError(pluginSection.pluginName);
+          const waitingForRenderer = !Component && hasRendererScript(pluginSection.pluginName) && rendererStatus !== 'error';
+
+          if (!Component) {
+            if (waitingForRenderer) {
+              return (
+                <div key={pluginSection.key} className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
+                  Loading plugin settings for "{pluginSection.pluginName}"...
+                </div>
+              );
+            }
+            if (rendererError) {
+              return (
+                <div key={pluginSection.key} className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
+                  Failed to load the plugin UI for "{pluginSection.pluginName}": {rendererError}
+                </div>
+              );
+            }
+            return null;
+          }
 
           return (
             <Component

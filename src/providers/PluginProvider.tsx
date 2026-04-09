@@ -143,6 +143,8 @@ type PluginEventRecord = {
   receivedAt: number;
 };
 
+type PluginRendererStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 type PluginNavigationRequestRecord = {
   pluginName: string;
   target: PluginNavigationTarget;
@@ -155,6 +157,9 @@ type PluginContextValue = {
   pluginEvents: PluginEventRecord[];
   navigationRequests: PluginNavigationRequestRecord[];
   rendererLoadCount: number;
+  hasRendererScript: (pluginName: string) => boolean;
+  getPluginRendererStatus: (pluginName: string) => PluginRendererStatus;
+  getPluginRendererError: (pluginName: string) => string | null;
   sendModalAction: (pluginName: string, modalId: string, action: string, data?: unknown) => Promise<unknown>;
   sendBannerAction: (pluginName: string, bannerId: string, action: string, data?: unknown) => Promise<unknown>;
   sendAction: (pluginName: string, targetId: string, action: string, data?: unknown) => Promise<unknown>;
@@ -173,6 +178,9 @@ const PluginContext = createContext<PluginContextValue>({
   pluginEvents: [],
   navigationRequests: [],
   rendererLoadCount: 0,
+  hasRendererScript: () => false,
+  getPluginRendererStatus: () => 'idle',
+  getPluginRendererError: () => null,
   sendModalAction: async () => null,
   sendBannerAction: async () => null,
   sendAction: async () => null,
@@ -188,12 +196,14 @@ const PluginContext = createContext<PluginContextValue>({
 function loadPluginRendererScripts(
   scripts: PluginRendererScript[],
   loadedRef: Map<string, string>,
+  onStatusChange: (pluginName: string, status: PluginRendererStatus, error?: string | null) => void,
   onLoaded: () => void,
 ): void {
   for (const { pluginName, entryUrl, scriptHash } of scripts) {
     const cacheKey = `${scriptHash}:${entryUrl}`;
     if (loadedRef.get(pluginName) === cacheKey) continue;
     loadedRef.set(pluginName, cacheKey);
+    onStatusChange(pluginName, 'loading', null);
 
     try {
       import(/* @vite-ignore */ entryUrl)
@@ -205,15 +215,19 @@ function loadPluginRendererScripts(
                 registerPluginComponents(name, components as Record<string, PluginComponent>);
               },
             });
+            onStatusChange(pluginName, 'ready', null);
             onLoaded();
           } else {
+            onStatusChange(pluginName, 'error', 'Renderer module has no register() export');
             console.warn(`[PluginProvider] Renderer for "${pluginName}" has no register() export`);
           }
         })
         .catch((err) => {
+          onStatusChange(pluginName, 'error', err instanceof Error ? err.message : String(err));
           console.error(`[PluginProvider] Failed to import renderer for "${pluginName}":`, err);
         });
     } catch (err) {
+      onStatusChange(pluginName, 'error', err instanceof Error ? err.message : String(err));
       console.error(`[PluginProvider] Failed to load renderer for "${pluginName}":`, err);
     }
   }
@@ -263,11 +277,31 @@ export function PluginProvider({ children }: { children: ReactNode }) {
   const [pluginEvents, setPluginEvents] = useState<PluginEventRecord[]>([]);
   const [navigationRequests, setNavigationRequests] = useState<PluginNavigationRequestRecord[]>([]);
   const [rendererLoadCount, setRendererLoadCount] = useState(0);
+  const [rendererStatuses, setRendererStatuses] = useState<Record<string, PluginRendererStatus>>({});
+  const [rendererErrors, setRendererErrors] = useState<Record<string, string | null>>({});
   const loadedRenderers = useRef(new Map<string, string>());
   const loadedStyles = useRef(new Map<string, string>());
 
   const onRendererLoaded = useCallback(() => {
     setRendererLoadCount((count) => count + 1);
+  }, []);
+
+  const updateRendererStatus = useCallback((pluginName: string, status: PluginRendererStatus, error?: string | null) => {
+    setRendererStatuses((current) => {
+      if (current[pluginName] === status) return current;
+      return {
+        ...current,
+        [pluginName]: status,
+      };
+    });
+    setRendererErrors((current) => {
+      const nextError = error ?? null;
+      if ((current[pluginName] ?? null) === nextError) return current;
+      return {
+        ...current,
+        [pluginName]: nextError,
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -276,7 +310,7 @@ export function PluginProvider({ children }: { children: ReactNode }) {
         const typed = state as PluginUIState;
         setUIState(typed);
         if (typed.rendererScripts?.length) {
-          loadPluginRendererScripts(typed.rendererScripts, loadedRenderers.current, onRendererLoaded);
+          loadPluginRendererScripts(typed.rendererScripts, loadedRenderers.current, updateRendererStatus, onRendererLoaded);
         }
         if (typed.rendererStyles?.length) {
           applyPluginRendererStyles(typed.rendererStyles, loadedStyles.current);
@@ -288,7 +322,7 @@ export function PluginProvider({ children }: { children: ReactNode }) {
       const typed = state as PluginUIState;
       setUIState(typed);
       if (typed.rendererScripts?.length) {
-        loadPluginRendererScripts(typed.rendererScripts, loadedRenderers.current, onRendererLoaded);
+        loadPluginRendererScripts(typed.rendererScripts, loadedRenderers.current, updateRendererStatus, onRendererLoaded);
       }
       if (typed.rendererStyles?.length) {
         applyPluginRendererStyles(typed.rendererStyles, loadedStyles.current);
@@ -332,7 +366,25 @@ export function PluginProvider({ children }: { children: ReactNode }) {
       unsubNavigation();
       unsubCallback();
     };
-  }, [onRendererLoaded]);
+  }, [onRendererLoaded, updateRendererStatus]);
+
+  const hasRendererScript = useCallback(
+    (pluginName: string) => uiState?.rendererScripts?.some((script) => script.pluginName === pluginName) ?? false,
+    [uiState],
+  );
+
+  const getPluginRendererStatus = useCallback(
+    (pluginName: string): PluginRendererStatus => {
+      if (rendererStatuses[pluginName]) return rendererStatuses[pluginName];
+      return hasRendererScript(pluginName) ? 'loading' : 'idle';
+    },
+    [hasRendererScript, rendererStatuses],
+  );
+
+  const getPluginRendererError = useCallback(
+    (pluginName: string): string | null => rendererErrors[pluginName] ?? null,
+    [rendererErrors],
+  );
 
   const sendModalAction = useCallback(
     (pluginName: string, modalId: string, action: string, data?: unknown) =>
@@ -423,6 +475,9 @@ export function PluginProvider({ children }: { children: ReactNode }) {
         pluginEvents,
         navigationRequests,
         rendererLoadCount,
+        hasRendererScript,
+        getPluginRendererStatus,
+        getPluginRendererError,
         sendModalAction,
         sendBannerAction,
         sendAction,

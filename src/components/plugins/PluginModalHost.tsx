@@ -12,6 +12,9 @@ export const PluginModalHost: FC = () => {
     getResolvedPluginConfig,
     getPluginState,
     rendererLoadCount,
+    hasRendererScript,
+    getPluginRendererStatus,
+    getPluginRendererError,
   } = usePlugins();
   const { config, updateConfig } = useConfig();
 
@@ -28,6 +31,9 @@ export const PluginModalHost: FC = () => {
     <>
       {visibleModals.map((modal) => {
         const Component = getPluginComponent(modal.pluginName, modal.component);
+        const rendererStatus = getPluginRendererStatus(modal.pluginName);
+        const rendererError = getPluginRendererError(modal.pluginName);
+        const waitingForRenderer = !Component && hasRendererScript(modal.pluginName) && rendererStatus !== 'error';
 
         const handleClose = () => {
           if (modal.closeable) {
@@ -89,6 +95,15 @@ export const PluginModalHost: FC = () => {
                     await setPluginConfig(modal.pluginName, path, value);
                   }}
                 />
+              ) : waitingForRenderer ? (
+                <div className="text-sm text-muted-foreground">
+                  <p>Loading plugin UI for &quot;{modal.pluginName}&quot;...</p>
+                </div>
+              ) : rendererError ? (
+                <div className="text-sm text-muted-foreground">
+                  <p>Failed to load the plugin UI for &quot;{modal.pluginName}&quot;.</p>
+                  <p className="mt-1 text-xs">{rendererError}</p>
+                </div>
               ) : (
                 <div className="text-sm text-muted-foreground">
                   <p>Plugin component &quot;{modal.component}&quot; not found for plugin &quot;{modal.pluginName}&quot;.</p>
