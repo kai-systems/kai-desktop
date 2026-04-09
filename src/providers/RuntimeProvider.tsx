@@ -83,6 +83,7 @@ type StoredMessage = ThreadMessageLike & {
   id: string;
   parentId: string | null;
   tokenUsage?: TokenUsageData;
+  messageMeta?: Record<string, unknown>;
 };
 
 export type ConversationRecord = {
@@ -111,6 +112,8 @@ export type ConversationRecord = {
   fallbackEnabled?: boolean;
   profilePrimaryModelKey?: string | null;
   currentWorkingDirectory?: string | null;
+  selectedBackendKey?: string | null;
+  metadata?: Record<string, unknown>;
   // Sub-agent metadata
   parentConversationId?: string | null;
   parentToolCallId?: string | null;
@@ -413,7 +416,18 @@ function getOrCreateAssistantInAcc(acc: MessageAccumulator): { msg: StoredMessag
   return { msg: newMsg, idx: acc.messages.length - 1 };
 }
 
-function applyTextDelta(acc: MessageAccumulator, text: string): void {
+function applyAssistantMessageMeta(message: StoredMessage, messageMeta?: Record<string, unknown>): StoredMessage {
+  if (!messageMeta || Object.keys(messageMeta).length === 0) return message;
+  return {
+    ...message,
+    messageMeta: {
+      ...(message.messageMeta ?? {}),
+      ...messageMeta,
+    },
+  };
+}
+
+function applyTextDelta(acc: MessageAccumulator, text: string, messageMeta?: Record<string, unknown>): void {
   const { msg, idx } = getOrCreateAssistantInAcc(acc);
   const content = (Array.isArray(msg.content) ? [...msg.content] : []) as ContentPart[];
   const lastPart = content[content.length - 1];
@@ -423,10 +437,10 @@ function applyTextDelta(acc: MessageAccumulator, text: string): void {
   } else {
     content.push({ type: 'text', source: 'assistant', text });
   }
-  acc.messages[idx] = { ...msg, content: toStoredContent(content) };
+  acc.messages[idx] = applyAssistantMessageMeta({ ...msg, content: toStoredContent(content) }, messageMeta);
 }
 
-function applyObserverMessage(acc: MessageAccumulator, text: string): void {
+function applyObserverMessage(acc: MessageAccumulator, text: string, messageMeta?: Record<string, unknown>): void {
   const { msg, idx } = getOrCreateAssistantInAcc(acc);
   const content = (Array.isArray(msg.content) ? [...msg.content] : []) as ContentPart[];
   const normalized = text.trim();
@@ -436,7 +450,7 @@ function applyObserverMessage(acc: MessageAccumulator, text: string): void {
   // when transitioning back to final output.
   const block = `${lastPart?.type === 'text' ? '\n\n' : ''}${normalized}\n\n`;
   content.push({ type: 'text', source: 'observer', text: block });
-  acc.messages[idx] = { ...msg, content: toStoredContent(content) };
+  acc.messages[idx] = applyAssistantMessageMeta({ ...msg, content: toStoredContent(content) }, messageMeta);
 }
 
 function applyToolCall(
@@ -1141,6 +1155,7 @@ export function RuntimeProvider({
           messageCount: 0, userMessageCount: 0,
           runStatus: 'idle', hasUnread: false, lastAssistantUpdateAt: null,
           selectedModelKey: null,
+          selectedBackendKey: null,
           currentWorkingDirectory: null,
         } as ConversationRecord);
         await app.conversations.setActiveId(newId);
@@ -1188,6 +1203,7 @@ export function RuntimeProvider({
     const unsubscribe = app.agent.onStreamEvent((event: unknown) => {
       const e = event as {
         conversationId: string; type: string; text?: string;
+        messageMeta?: Record<string, unknown>;
         toolCallId?: string; toolName?: string; args?: unknown;
         result?: unknown; error?: string;
         startedAt?: string; finishedAt?: string; durationMs?: number;
@@ -1270,7 +1286,7 @@ export function RuntimeProvider({
             saAcc.headId = userMsg.id;
           }
         } else if (e.type === 'text-delta') {
-          applyTextDelta(saAcc, e.text ?? '');
+          applyTextDelta(saAcc, e.text ?? '', e.messageMeta);
         } else if (e.type === 'tool-call' && e.toolCallId) {
           applyToolCall(saAcc, { toolCallId: e.toolCallId, toolName: e.toolName ?? 'unknown', args: e.args, startedAt: e.startedAt });
         } else if (e.type === 'tool-result') {
@@ -1352,7 +1368,7 @@ export function RuntimeProvider({
             acc.headId = fresh.id;
           }
         }
-        applyTextDelta(acc, e.text ?? '');
+        applyTextDelta(acc, e.text ?? '', e.messageMeta);
       } else if (e.type === 'realtime-user-transcript') {
         // Realtime audio: create/update a user message for spoken text
         const itemId = (e as { itemId?: string }).itemId ?? msgId();
@@ -1415,7 +1431,7 @@ export function RuntimeProvider({
         }
         return;
       } else if (e.type === 'observer-message') {
-        applyObserverMessage(acc, e.text ?? '');
+        applyObserverMessage(acc, e.text ?? '', e.messageMeta);
       } else if (e.type === 'tool-call') {
         if (!e.toolCallId) return;
         applyToolCall(acc, {

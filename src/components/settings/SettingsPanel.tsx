@@ -63,7 +63,7 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
   const [activeSection, setActiveSection] = useState<string>('models');
   const { config, updateConfig } = useConfig();
   const pluginSections = usePluginSettingsSections();
-  const { setPluginConfig, sendAction } = usePlugins();
+  const { setPluginConfig, sendAction, getResolvedPluginConfig, getPluginState } = usePlugins();
   const sortedPluginSections = [...pluginSections].sort((a, b) => a.priority - b.priority);
   const hasPluginSections = sortedPluginSections.length > 0;
 
@@ -164,6 +164,8 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
               pluginName={pluginSection.pluginName}
               config={config}
               updateConfig={updateConfig}
+              pluginConfig={getResolvedPluginConfig(pluginSection.pluginName)}
+              pluginState={getPluginState(pluginSection.pluginName)}
               onAction={(action: string, data?: unknown) => {
                 sendAction(pluginSection.pluginName, `settings:${pluginSection.component}`, action, data);
               }}

@@ -62,6 +62,7 @@ import { CallOverlay } from './CallOverlay';
 import { ComputerSessionPanel } from './ComputerSessionPanel';
 import { ComputerSetupPanel } from './ComputerSetupPanel';
 import { useComputerUse } from '@/providers/ComputerUseProvider';
+import { usePlugins } from '@/providers/PluginProvider';
 import { shouldShowComputerSetup, type ComputerSession } from '../../../shared/computer-use';
 import { getResponseTiming } from '@/lib/response-timing';
 const MATRIX_GLYPHS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890@#$%^&*+-/~{[|`]}<>01';
@@ -83,6 +84,11 @@ export const Thread: FC<{
   const [searchOpen, setSearchOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const { callState } = useRealtime();
+  const activeConversationId = useActiveConversationId();
+  const { uiState: pluginUIState } = usePlugins();
+  const threadDecorations = (pluginUIState?.threadDecorations ?? []).filter((decoration) => (
+    decoration.visible && (!decoration.conversationId || decoration.conversationId === activeConversationId)
+  ));
 
   useEffect(() => {
     if (!window.app?.onFind) return;
@@ -96,6 +102,28 @@ export const Thread: FC<{
       <FallbackBanner />
       <ComputerUseFallbackBanner />
       <ThreadModeTabs mode={mode} onChange={onChangeMode} />
+      {threadDecorations.length > 0 && (
+        <div className="border-b border-border/60 bg-background/65 px-6 py-2 backdrop-blur-sm">
+          <div className="mx-auto flex w-full max-w-5xl flex-wrap gap-2">
+            {threadDecorations.map((decoration) => (
+              <span
+                key={`${decoration.pluginName}-${decoration.id}`}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                  decoration.variant === 'error'
+                    ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                    : decoration.variant === 'warning'
+                      ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                      : decoration.variant === 'success'
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
+                }`}
+              >
+                {decoration.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {mode === 'chat' ? (
         <ThreadPrimitive.Viewport ref={viewportRef} className="relative min-h-0 flex-1 overflow-y-auto">
           <ThreadPrimitive.Empty>

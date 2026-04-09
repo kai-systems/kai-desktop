@@ -5,6 +5,7 @@ import { resolveModelForThread, resolveModelCatalog, resolveStreamConfig, type M
 import { streamAgentResponse, streamWithFallback } from '../agent/mastra-agent.js';
 import type { StreamEvent, ReasoningEffort } from '../agent/mastra-agent.js';
 import { createLanguageModelFromConfig } from '../agent/language-model.js';
+import { getAgentBackend, listAgentBackends, registerAgentBackend } from '../agent/backend-registry.js';
 import type { AppConfig } from '../config/schema.js';
 import { readEffectiveConfig } from './config.js';
 import { shouldCompact, compactConversationPrefix, compactToolResult, estimateToolTokens } from '../agent/compaction.js';
@@ -19,6 +20,7 @@ import {
   type LaunchToolCallResult,
 } from '../agent/tool-observer.js';
 import { sendSubAgentFollowUp, sendSubAgentFollowUpByToolCall, stopSubAgent, getActiveSubAgentIds } from '../tools/sub-agent.js';
+import { readConversationStore } from './conversations.js';
 import { recordUsageEvent } from './usage.js';
 
 const activeStreams = new Map<string, { abort: () => void }>();
@@ -252,8 +254,77 @@ export function updateCliTools(cliTools: ToolDefinition[]): void {
   registeredTools = [...nonCli, ...ensureSafeToolDefinitions(cliTools)];
 }
 
+function ensureBuiltInAgentBackends(): void {
+  registerAgentBackend({
+    key: 'mastra',
+    displayName: 'Mastra',
+    stream: (options) => {
+      if (!options.primaryModel || !options.streamConfig) {
+        return (async function* missingModelStream(): AsyncGenerator<StreamEvent> {
+          yield {
+            conversationId: options.conversationId,
+            type: 'text-delta',
+            text: 'No model configured. Please add a model provider in Settings and ensure your API key is set.',
+          };
+          yield { conversationId: options.conversationId, type: 'done' };
+        })();
+      }
+
+      const dbPath = join(options.appHome, 'data', 'memory.db');
+      const configForStream: AppConfig = {
+        ...options.config,
+        systemPrompt: withWorkingDirectoryPrompt(options.streamConfig.systemPrompt, options.cwd),
+        advanced: {
+          ...options.config.advanced,
+          temperature: options.streamConfig.temperature,
+          maxSteps: options.streamConfig.maxSteps,
+          maxRetries: options.streamConfig.maxRetries,
+        },
+      };
+
+      if (options.streamConfig.fallbackEnabled) {
+        return streamWithFallback(
+          options.conversationId,
+          options.messages,
+          options.streamConfig,
+          options.config,
+          options.tools,
+          dbPath,
+          {
+            reasoningEffort: options.reasoningEffort,
+            abortSignal: options.abortSignal,
+            cwd: options.cwd,
+            emitEvent: options.emitEvent,
+            onToolExecutionStart: options.onToolExecutionStart,
+            onToolExecutionEnd: options.onToolExecutionEnd,
+            augmentToolResult: options.augmentToolResult,
+          },
+        );
+      }
+
+      return streamAgentResponse(
+        options.conversationId,
+        options.messages,
+        options.primaryModel.modelConfig,
+        configForStream,
+        options.tools,
+        dbPath,
+        {
+          reasoningEffort: options.reasoningEffort,
+          abortSignal: options.abortSignal,
+          cwd: options.cwd,
+          emitEvent: options.emitEvent,
+          onToolExecutionStart: options.onToolExecutionStart,
+          onToolExecutionEnd: options.onToolExecutionEnd,
+          augmentToolResult: options.augmentToolResult,
+        },
+      );
+    },
+  });
+}
+
 export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
-  const dbPath = join(appHome, 'data', 'memory.db');
+  ensureBuiltInAgentBackends();
 
   ipcMain.handle(
     'agent:stream',
@@ -289,18 +360,28 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
       return { conversationId };
     }
 
-    let streamConfig = resolveStreamConfig(config, {
+    const streamConfig = resolveStreamConfig(config, {
       threadModelKey: modelKey ?? null,
       threadProfileKey: profileKey ?? null,
       reasoningEffort,
       fallbackEnabled: fallbackEnabled ?? false,
     });
-    let modelEntry = streamConfig?.primaryModel ?? null;
+    const modelEntry = streamConfig?.primaryModel ?? null;
+    const requestedBackendKey = readConversationStore(appHome).conversations[conversationId]?.selectedBackendKey ?? null;
+    const requestedBackend = getAgentBackend(requestedBackendKey);
+    const defaultBackend = getAgentBackend('mastra');
+    const selectedBackend = requestedBackend && (requestedBackend.isAvailable?.() ?? true)
+      ? requestedBackend
+      : defaultBackend;
+    const resolvedBackendKey = selectedBackend?.key ?? 'mastra';
     const messageList = messages as Array<{ role?: string; content?: unknown }>;
-    console.info(`[Agent:stream] conv=${conversationId} backend=mastra model=${modelKey ?? config.models.defaultModelKey} profile=${profileKey ?? 'none'} fallback=${fallbackEnabled ? 'on' : 'off'} fallbackModels=${streamConfig?.fallbackModels.length ?? 0} messageCount=${messageList.length}`);
+    console.info(`[Agent:stream] conv=${conversationId} backend=${resolvedBackendKey} model=${modelKey ?? config.models.defaultModelKey} profile=${profileKey ?? 'none'} fallback=${fallbackEnabled ? 'on' : 'off'} fallbackModels=${streamConfig?.fallbackModels.length ?? 0} messageCount=${messageList.length}`);
 
     // Track the model key for usage attribution
-    activeStreamModelKeys.set(conversationId, modelEntry?.modelConfig?.modelName ?? modelKey ?? config.models.defaultModelKey ?? 'unknown');
+    activeStreamModelKeys.set(
+      conversationId,
+      modelEntry?.modelConfig?.modelName ?? modelKey ?? config.models.defaultModelKey ?? `backend:${resolvedBackendKey}`,
+    );
     for (const [index, message] of messageList.entries()) {
       const contentPreview = typeof message.content === 'string'
         ? message.content.slice(0, 200)
@@ -310,11 +391,11 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
       console.info(`[Agent:stream]   msg[${index}] role=${message.role ?? '?'} contentLen=${JSON.stringify(message.content ?? '').length} preview=${contentPreview}`);
     }
 
-    if (!modelEntry || !streamConfig) {
+    if (!selectedBackend) {
       broadcastStreamEvent({
         conversationId,
-        type: 'text-delta',
-        text: 'No model configured. Please add a model provider in Settings and ensure your API key is set.',
+        type: 'error',
+        error: 'No agent backend is available for this conversation.',
       });
       broadcastStreamEvent({ conversationId, type: 'done' });
       return { conversationId };
@@ -727,7 +808,7 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
           return;
         }
         // Check if compaction is needed
-        if (config.compaction.conversation.enabled) {
+        if (config.compaction.conversation.enabled && modelEntry) {
           const chatMessages = messages as Array<{ role: string; content: unknown; id?: string }>;
           const check = shouldCompact(
             chatMessages as Parameters<typeof shouldCompact>[0],
@@ -772,34 +853,36 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
           }
         }
 
-        observer = new ToolObserverManager({
-          conversationId,
-          modelConfig: modelEntry.modelConfig,
-          config: resolveToolObserverConfig(config),
-          userRequestSummary: summarizeLatestUserRequest(messages),
-          baseThreadContext: summarizeThreadContext(messages),
-          emitMidToolMessage: (text) => {
-            if (activeObserverSessions.get(conversationId) !== observerSessionId) return;
-            if (!controller.signal.aborted) {
-              broadcastStreamEvent({
-                conversationId,
-                type: 'observer-message',
-                text,
-              });
-            }
-          },
-          cancelToolCall: (toolCallId) => {
-            if (activeObserverSessions.get(conversationId) !== observerSessionId) return false;
-            const cancel = toolCancels.get(toolCallId);
-            if (!cancel) return false;
-            cancel();
-            return true;
-          },
-          launchToolCall: launchObserverToolCall,
-          messageSubAgent: (toolCallId, message) => {
-            return sendSubAgentFollowUpByToolCall(toolCallId, message);
-          },
-        });
+        if (modelEntry) {
+          observer = new ToolObserverManager({
+            conversationId,
+            modelConfig: modelEntry.modelConfig,
+            config: resolveToolObserverConfig(config),
+            userRequestSummary: summarizeLatestUserRequest(messages),
+            baseThreadContext: summarizeThreadContext(messages),
+            emitMidToolMessage: (text) => {
+              if (activeObserverSessions.get(conversationId) !== observerSessionId) return;
+              if (!controller.signal.aborted) {
+                broadcastStreamEvent({
+                  conversationId,
+                  type: 'observer-message',
+                  text,
+                });
+              }
+            },
+            cancelToolCall: (toolCallId) => {
+              if (activeObserverSessions.get(conversationId) !== observerSessionId) return false;
+              const cancel = toolCancels.get(toolCallId);
+              if (!cancel) return false;
+              cancel();
+              return true;
+            },
+            launchToolCall: launchObserverToolCall,
+            messageSubAgent: (toolCallId, message) => {
+              return sendSubAgentFollowUpByToolCall(toolCallId, message);
+            },
+          });
+        }
 
         const streamOptions = {
             reasoningEffort,
@@ -852,37 +935,25 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
             },
           };
 
-        // Apply profile system prompt override to config
-        const configForStream: AppConfig = {
-          ...config,
-          systemPrompt: withWorkingDirectoryPrompt(streamConfig.systemPrompt, cwd),
-          advanced: {
-            ...config.advanced,
-            temperature: streamConfig.temperature,
-            maxSteps: streamConfig.maxSteps,
-            maxRetries: streamConfig.maxRetries,
-          },
-        };
-
-        const stream = streamConfig.fallbackEnabled
-          ? streamWithFallback(
-              conversationId,
-              messages,
-              streamConfig,
-              config,
-              registeredTools,
-              dbPath,
-              { ...streamOptions, cwd },
-            )
-          : streamAgentResponse(
-              conversationId,
-              messages,
-              modelEntry.modelConfig,
-              configForStream,
-              registeredTools,
-              dbPath,
-              { ...streamOptions, cwd },
-            );
+        const stream = selectedBackend.stream({
+          conversationId,
+          messages,
+          modelKey,
+          profileKey,
+          fallbackEnabled,
+          reasoningEffort,
+          cwd,
+          config,
+          appHome,
+          primaryModel: modelEntry,
+          streamConfig,
+          tools: registeredTools,
+          abortSignal: controller.signal,
+          emitEvent: streamOptions.emitEvent,
+          onToolExecutionStart: streamOptions.onToolExecutionStart,
+          onToolExecutionEnd: streamOptions.onToolExecutionEnd,
+          augmentToolResult: streamOptions.augmentToolResult,
+        });
 
         for await (const event of stream) {
           if (event.type === 'tool-call' || event.type === 'tool-result' || event.type === 'tool-compaction') {
@@ -1042,6 +1113,16 @@ export function registerAgentHandlers(ipcMain: IpcMain, appHome: string): void {
 
   ipcMain.handle('agent:sub-agent-list', async () => {
     return { ids: getActiveSubAgentIds() };
+  });
+
+  ipcMain.handle('agent:list-backends', async () => {
+    return listAgentBackends()
+      .filter((backend) => backend.isAvailable?.() ?? true)
+      .map((backend) => ({
+        key: backend.key,
+        displayName: backend.displayName,
+        pluginName: backend.pluginName ?? null,
+      }));
   });
 
   // Model catalog endpoint

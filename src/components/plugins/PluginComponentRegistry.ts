@@ -8,6 +8,7 @@ type PluginComponentProps = {
   config?: Record<string, unknown>;
   updateConfig?: (path: string, value: unknown) => Promise<void>;
   pluginConfig?: Record<string, unknown>;
+  pluginState?: Record<string, unknown>;
   setPluginConfig?: (path: string, value: unknown) => Promise<void>;
 };
 

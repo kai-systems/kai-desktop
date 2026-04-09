@@ -16,6 +16,7 @@ type AppAPI = {
     stream: (conversationId: string, messages: unknown[], modelKey?: string, reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh', profileKey?: string, fallbackEnabled?: boolean, cwd?: string) => Promise<unknown>;
     cancelStream: (conversationId: string) => Promise<unknown>;
     generateTitle: (messages: unknown[], modelKey?: string) => Promise<{ title: string | null }>;
+    listBackends: () => Promise<Array<{ key: string; displayName: string; pluginName?: string | null }>>;
     onStreamEvent: (callback: (event: unknown) => void) => () => void;
     sendSubAgentMessage: (subAgentConversationId: string, message: string) => Promise<{ ok: boolean }>;
     stopSubAgent: (subAgentConversationId: string) => Promise<{ ok: boolean }>;
@@ -79,6 +80,8 @@ type AppAPI = {
     bannerAction: (pluginName: string, bannerId: string, action: string, data?: unknown) => Promise<unknown>;
     action: (pluginName: string, targetId: string, action: string, data?: unknown) => Promise<unknown>;
     onUIStateChanged: (callback: (state: unknown) => void) => () => void;
+    onEvent: (callback: (event: unknown) => void) => () => void;
+    onNavigationRequest: (callback: (request: unknown) => void) => () => void;
     onModalCallback: (callback: (data: unknown) => void) => () => void;
   };
   modelCatalog: () => Promise<unknown>;

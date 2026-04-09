@@ -10,6 +10,8 @@ type ConversationRecord = {
   title: string | null;
   fallbackTitle: string | null;
   messages: unknown[];
+  messageTree?: unknown[];
+  headId?: string | null;
   conversationCompaction: unknown | null;
   lastContextUsage: unknown | null;
   createdAt: string;
@@ -27,6 +29,8 @@ type ConversationRecord = {
   fallbackEnabled?: boolean;
   profilePrimaryModelKey?: string | null;
   currentWorkingDirectory?: string | null;
+  selectedBackendKey?: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 type ConversationsStore = {

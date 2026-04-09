@@ -8,6 +8,7 @@ import type { ComputerSession } from '../../../shared/computer-use';
 import { useConversationPreferences } from './useConversationPreferences';
 import { SortPopover } from './SortPopover';
 import { FilterPopover } from './FilterPopover';
+import { usePlugins } from '@/providers/PluginProvider';
 
 type ConversationSummary = Pick<
   ConversationRecord,
@@ -146,6 +147,8 @@ export const ConversationList: FC<ConversationListProps> = ({
   const sortButtonRef = useRef<HTMLButtonElement>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const { sort, setSort, filter, setFilter, activeFilterCount, clearFilters, isDefaultSort } = useConversationPreferences();
+  const { uiState: pluginUIState } = usePlugins();
+  const conversationDecorations = pluginUIState?.conversationDecorations ?? [];
 
   const togglePin = useCallback((id: string) => {
     setPinnedIds((prev) => {
@@ -421,6 +424,7 @@ export const ConversationList: FC<ConversationListProps> = ({
                 const isRemoving = removingIds.has(conv.id);
                 const computerStatus = getComputerStatus(conv.id);
                 const isPinned = pinnedIds.has(conv.id);
+                const decorations = conversationDecorations.filter((decoration) => decoration.visible && decoration.conversationId === conv.id);
 
                 return (
                   <div
@@ -446,6 +450,26 @@ export const ConversationList: FC<ConversationListProps> = ({
                       <span className={`line-clamp-2 text-sm ${hasUnread ? 'font-semibold text-sidebar-foreground' : 'font-medium text-sidebar-foreground/95'}`}>
                         {getDisplayTitle(conv, sessionsByConversation.get(conv.id))}
                       </span>
+                      {decorations.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {decorations.slice(0, 3).map((decoration) => (
+                            <span
+                              key={`${decoration.pluginName}-${decoration.id}`}
+                              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                decoration.variant === 'error'
+                                  ? 'bg-red-500/10 text-red-600 dark:text-red-300'
+                                  : decoration.variant === 'warning'
+                                    ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                                    : decoration.variant === 'success'
+                                      ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                      : 'bg-blue-500/10 text-blue-700 dark:text-blue-300'
+                              }`}
+                            >
+                              {decoration.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <span className="mt-1 block text-[12px] text-muted-foreground">
                         {isRunning ? 'Running now' : formatRelativeTime(conv.lastAssistantUpdateAt ?? conv.lastMessageAt)}
                         {conv.messageCount > 0 && ` · ${conv.messageCount} msgs`}

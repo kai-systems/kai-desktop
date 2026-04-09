@@ -16,6 +16,8 @@ import { ExportDialog } from '@/components/conversations/ExportDialog';
 import { PluginProvider } from '@/providers/PluginProvider';
 import { PluginBannerSlot } from '@/components/plugins/PluginBannerSlot';
 import { PluginModalHost } from '@/components/plugins/PluginModalHost';
+import { PluginPanelHost } from '@/components/plugins/PluginPanelHost';
+import { PluginToastHost } from '@/components/plugins/PluginToastHost';
 import { ComputerUseProvider, useComputerUse } from '@/providers/ComputerUseProvider';
 import { OverlayShell } from '@/components/overlay/OverlayShell';
 import { useThemeInjector } from '@/hooks/useThemeInjector';
@@ -27,6 +29,8 @@ import type { ReasoningEffort } from '@/components/thread/ReasoningEffortSelecto
 import { app } from '@/lib/ipc-client';
 import type { ConversationRecord } from '@/providers/RuntimeProvider';
 import { shouldShowComputerSetup, type ComputerSession, type ComputerUseSurface } from '../shared/computer-use';
+import { usePlugins } from '@/providers/PluginProvider';
+import { getPluginNavigationIcon } from '@/components/plugins/plugin-icons';
 
 export default function App() {
   return (
@@ -341,7 +345,40 @@ async function cleanupEmptyConversations(
   }
 }
 
-type AppView = 'chat' | 'settings';
+type AppView = string;
+
+const CHAT_VIEW = 'chat';
+const SETTINGS_VIEW = 'settings';
+
+function getPluginPanelViewKey(pluginName: string, panelId: string): string {
+  return `plugin-panel:${pluginName}:${panelId}`;
+}
+
+function matchesPluginShortcut(event: KeyboardEvent, shortcut: string): boolean {
+  const tokens = shortcut.toLowerCase().split('+').map((token) => token.trim()).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  const keyToken = tokens[tokens.length - 1];
+  const key = event.key.toLowerCase();
+  const normalizedKey = key === ' ' ? 'space' : key;
+
+  const requiresMeta = tokens.includes('cmd') || tokens.includes('meta');
+  const requiresCtrl = tokens.includes('ctrl') || tokens.includes('control');
+  const requiresMod = tokens.includes('mod');
+  const requiresShift = tokens.includes('shift');
+  const requiresAlt = tokens.includes('alt') || tokens.includes('option');
+
+  if (requiresMeta && !event.metaKey) return false;
+  if (requiresCtrl && !event.ctrlKey) return false;
+  if (requiresMod && !(event.metaKey || event.ctrlKey)) return false;
+  if (requiresShift !== event.shiftKey) return false;
+  if (requiresAlt !== event.altKey) return false;
+
+  if (!requiresMeta && !requiresMod && event.metaKey) return false;
+  if (!requiresCtrl && !requiresMod && event.ctrlKey) return false;
+
+  return normalizedKey === keyToken;
+}
 
 function AppShell() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -362,6 +399,12 @@ function AppShell() {
   const [dragState, setDragState] = useState<{ startX: number; startWidth: number } | null>(null);
   const { config, updateConfig } = useConfig();
   const { title: themeTitle, Icon: ThemeIcon, toggle: toggleTheme } = useThemeToggleControl();
+  const {
+    uiState: pluginUIState,
+    sendAction: sendPluginAction,
+    consumeNavigationRequest,
+    navigationRequests,
+  } = usePlugins();
 
   useEffect(() => {
     const ui = config?.ui as { sidebarWidth?: number } | undefined;
@@ -484,7 +527,7 @@ function AppShell() {
   const handleSwitchConversation = useCallback(async (id: string) => {
     await cleanupAbandonedConversation(id);
     await app.conversations.setActiveId(id);
-    setActiveView('chat');
+    setActiveView(CHAT_VIEW);
     setActiveConversationId(id);
     // Load the title for the switched-to conversation
     const conv = await app.conversations.get(id) as ConversationRecord | null;
@@ -508,10 +551,11 @@ function AppShell() {
       messageCount: 0, userMessageCount: 0,
       runStatus: 'idle', hasUnread: false, lastAssistantUpdateAt: null,
       selectedModelKey: null,
+      selectedBackendKey: null,
       currentWorkingDirectory: null,
     });
     await app.conversations.setActiveId(newId);
-    setActiveView('chat');
+    setActiveView(CHAT_VIEW);
     setActiveConversationId(newId);
     // Reset per-conversation settings for the new conversation
     setSelectedModelKey(null);
@@ -524,26 +568,13 @@ function AppShell() {
     if (activeView !== 'settings') {
       await cleanupAbandonedConversation();
     }
-    setActiveView((v) => v === 'settings' ? 'chat' : 'settings');
+    setActiveView((v) => v === SETTINGS_VIEW ? CHAT_VIEW : SETTINGS_VIEW);
   }, [cleanupAbandonedConversation, activeView]);
 
   const handleOpenSettings = useCallback(async () => {
     await cleanupAbandonedConversation();
-    setActiveView('settings');
+    setActiveView(SETTINGS_VIEW);
   }, [cleanupAbandonedConversation]);
-
-  // Global keyboard shortcuts
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      switch (e.key) {
-        case '?': e.preventDefault(); setShortcutsOpen((v) => !v); break;
-        case ',': e.preventDefault(); void handleOpenSettings(); break;
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [handleOpenSettings]);
 
   // Listen for Cmd+, / menu Settings
   useEffect(() => {
@@ -618,10 +649,78 @@ function AppShell() {
   // the window. Switch to the computer-use tab so the user sees the session.
   useEffect(() => {
     return app.computerUse.onFocusThread(() => {
-      setActiveView('chat');
+      setActiveView(CHAT_VIEW);
       setThreadMode('computer');
     });
   }, []);
+
+  useEffect(() => {
+    if (navigationRequests.length === 0) return;
+    const request = consumeNavigationRequest();
+    if (!request) return;
+
+    if (request.target.type === 'conversation') {
+      void handleSwitchConversation(request.target.conversationId);
+      return;
+    }
+
+    if (request.target.type === 'panel') {
+      setActiveView(getPluginPanelViewKey(request.pluginName, request.target.panelId));
+      return;
+    }
+
+    if (request.target.type === 'action') {
+      void sendPluginAction(request.pluginName, request.target.targetId, request.target.action, request.target.data);
+    }
+  }, [consumeNavigationRequest, handleSwitchConversation, navigationRequests.length, sendPluginAction]);
+
+  const pluginPanels = pluginUIState?.panels?.filter((panel) => panel.visible) ?? [];
+  const pluginNavigationItems = pluginUIState?.navigationItems?.filter((item) => item.visible) ?? [];
+  const activePluginPanel = useMemo(() => (
+    pluginPanels.find((panel) => activeView === getPluginPanelViewKey(panel.pluginName, panel.id)) ?? null
+  ), [activeView, pluginPanels]);
+
+  const handlePluginNavigationItem = useCallback((pluginName: string, target: { type: string; panelId?: string; conversationId?: string; targetId?: string; action?: string; data?: unknown }) => {
+    if (target.type === 'panel' && target.panelId) {
+      setActiveView((current) => {
+        const next = getPluginPanelViewKey(pluginName, target.panelId!);
+        return current === next ? CHAT_VIEW : next;
+      });
+      return;
+    }
+
+    if (target.type === 'conversation' && target.conversationId) {
+      void handleSwitchConversation(target.conversationId);
+      return;
+    }
+
+    if (target.type === 'action' && target.targetId && target.action) {
+      void sendPluginAction(pluginName, target.targetId, target.action, target.data);
+    }
+  }, [handleSwitchConversation, sendPluginAction]);
+
+  const pluginCommands = pluginUIState?.commands?.filter((command) => command.visible) ?? [];
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      const matchingPluginCommand = pluginCommands.find((command) => command.shortcut && matchesPluginShortcut(e, command.shortcut));
+      if (matchingPluginCommand) {
+        e.preventDefault();
+        handlePluginNavigationItem(matchingPluginCommand.pluginName, matchingPluginCommand.target as { type: string; panelId?: string; conversationId?: string; targetId?: string; action?: string; data?: unknown });
+        return;
+      }
+
+      switch (e.key) {
+        case '?': e.preventDefault(); setShortcutsOpen((v) => !v); break;
+        case ',': e.preventDefault(); void handleOpenSettings(); break;
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleOpenSettings, handlePluginNavigationItem, pluginCommands]);
 
   const dockItems: DockItem[] = useMemo(() => [
     {
@@ -629,15 +728,27 @@ function AppShell() {
       label: 'Settings',
       icon: <SettingsIcon className="h-[18px] w-[18px]" />,
       onClick: () => { void handleSettingsToggle(); },
-      active: activeView === 'settings',
+      active: activeView === SETTINGS_VIEW,
     },
+    ...pluginNavigationItems.map((item) => ({
+      id: `plugin-nav:${item.pluginName}:${item.id}`,
+      label: item.label,
+      icon: getPluginNavigationIcon(item.icon),
+      onClick: () => handlePluginNavigationItem(item.pluginName, item.target as { type: string; panelId?: string; conversationId?: string; targetId?: string; action?: string; data?: unknown }),
+      active: item.target.type === 'panel' && activeView === getPluginPanelViewKey(item.pluginName, item.target.panelId),
+      badge: item.badge != null ? (
+        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-primary px-1 text-[8px] font-bold text-primary-foreground">
+          {String(item.badge)}
+        </span>
+      ) : undefined,
+    })),
     {
       id: 'theme',
       label: themeTitle,
       icon: <ThemeIcon className="h-[18px] w-[18px]" />,
       onClick: toggleTheme,
     },
-  ], [ThemeIcon, activeView, handleSettingsToggle, themeTitle, toggleTheme]);
+  ], [ThemeIcon, activeView, handlePluginNavigationItem, handleSettingsToggle, pluginNavigationItems, themeTitle, toggleTheme]);
 
   return (
     <AttachmentProvider>
@@ -660,6 +771,7 @@ function AppShell() {
       />
       <RealtimeProvider>
         <PluginModalHost />
+        <PluginToastHost />
         <KeyboardShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
         <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} conversationId={activeConversationId} />
         <div className="flex h-screen overflow-hidden bg-transparent text-foreground">
@@ -710,15 +822,17 @@ function AppShell() {
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className="titlebar-drag flex h-14 items-center justify-between border-b border-border/70 bg-background/85 px-6 backdrop-blur-md">
               <div className="titlebar-no-drag min-w-0">
-                {activeView === 'settings' ? (
+                {activeView === SETTINGS_VIEW ? (
                   <span className="text-sm font-medium text-foreground">Settings</span>
+                ) : activePluginPanel ? (
+                  <span className="text-sm font-medium text-foreground">{activePluginPanel.title}</span>
                 ) : (
                   <span className="block truncate text-sm font-medium text-foreground">
                     {activeConversationTitle}
                   </span>
                 )}
               </div>
-              {activeView === 'chat' && activeConversationId && (
+              {activeView === CHAT_VIEW && activeConversationId && (
                 <button
                   type="button"
                   onClick={() => setExportOpen(true)}
@@ -731,8 +845,10 @@ function AppShell() {
             </div>
             <PluginBannerSlot />
             <div className="min-h-0 flex-1 overflow-hidden">
-              {activeView === 'settings' ? (
-                <SettingsPanel onClose={() => setActiveView('chat')} />
+              {activeView === SETTINGS_VIEW ? (
+                <SettingsPanel onClose={() => setActiveView(CHAT_VIEW)} />
+              ) : activePluginPanel ? (
+                <PluginPanelHost panel={activePluginPanel} onClose={() => setActiveView(CHAT_VIEW)} />
               ) : (
                 <ThreadOrSubAgent
                   mode={threadMode}

@@ -5,7 +5,14 @@ import { getPluginComponent } from './PluginComponentRegistry';
 import { useConfig } from '@/providers/ConfigProvider';
 
 export const PluginModalHost: FC = () => {
-  const { uiState, sendModalAction, setPluginConfig, rendererLoadCount } = usePlugins();
+  const {
+    uiState,
+    sendModalAction,
+    setPluginConfig,
+    getResolvedPluginConfig,
+    getPluginState,
+    rendererLoadCount,
+  } = usePlugins();
   const { config, updateConfig } = useConfig();
 
   // rendererLoadCount changes when a plugin's renderer script finishes loading,
@@ -76,7 +83,8 @@ export const PluginModalHost: FC = () => {
                   onClose={modal.closeable ? handleClose : undefined}
                   config={config ?? undefined}
                   updateConfig={updateConfig}
-                  pluginConfig={undefined}
+                  pluginConfig={getResolvedPluginConfig(modal.pluginName)}
+                  pluginState={getPluginState(modal.pluginName)}
                   setPluginConfig={async (path, value) => {
                     await setPluginConfig(modal.pluginName, path, value);
                   }}

@@ -5,7 +5,7 @@ import { getPluginComponent } from './PluginComponentRegistry';
 import { useConfig } from '@/providers/ConfigProvider';
 
 export const PluginBannerSlot: FC = () => {
-  const { uiState, sendBannerAction } = usePlugins();
+  const { uiState, sendBannerAction, getResolvedPluginConfig, getPluginState } = usePlugins();
   const { config, updateConfig } = useConfig();
 
   if (!uiState) return null;
@@ -28,6 +28,8 @@ export const PluginBannerSlot: FC = () => {
                 onAction={(action, data) => sendBannerAction(banner.pluginName, banner.id, action, data)}
                 config={config ?? undefined}
                 updateConfig={updateConfig}
+                pluginConfig={getResolvedPluginConfig(banner.pluginName)}
+                pluginState={getPluginState(banner.pluginName)}
               />
             );
           }

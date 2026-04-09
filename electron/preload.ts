@@ -30,6 +30,11 @@ const appAPI = {
     ) => ipcRenderer.invoke('agent:stream', conversationId, messages, modelKey, reasoningEffort, profileKey, fallbackEnabled, cwd),
     cancelStream: (conversationId: string) => ipcRenderer.invoke('agent:cancel-stream', conversationId),
     generateTitle: (messages: unknown[], modelKey?: string) => ipcRenderer.invoke('agent:generate-title', messages, modelKey),
+    listBackends: () => ipcRenderer.invoke('agent:list-backends') as Promise<Array<{
+      key: string;
+      displayName: string;
+      pluginName?: string | null;
+    }>>,
     onStreamEvent: (callback: (event: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
       ipcRenderer.on('agent:stream-event', handler);
@@ -118,6 +123,16 @@ const appAPI = {
       const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
       ipcRenderer.on('plugin:ui-state-changed', handler);
       return () => ipcRenderer.removeListener('plugin:ui-state-changed', handler);
+    },
+    onEvent: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on('plugin:event', handler);
+      return () => ipcRenderer.removeListener('plugin:event', handler);
+    },
+    onNavigationRequest: (callback: (request: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on('plugin:navigation-request', handler);
+      return () => ipcRenderer.removeListener('plugin:navigation-request', handler);
     },
     onModalCallback: (callback: (data: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
