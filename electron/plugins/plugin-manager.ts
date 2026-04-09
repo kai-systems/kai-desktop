@@ -608,19 +608,24 @@ export class PluginManager {
     const rendererStyles: PluginRendererStyle[] = [];
     const pluginConfigs: Record<string, Record<string, unknown>> = {};
     const pluginStates: Record<string, Record<string, unknown>> = {};
+    const pluginStatuses: Record<string, PluginInstance['state']> = {};
+    const pluginErrors: Record<string, string | undefined> = {};
     const notifications: PluginNotificationDescriptor[] = [];
     let requiredPluginsReady = true;
 
     for (const instance of this.plugins.values()) {
       pluginConfigs[instance.manifest.name] = this.getPluginConfig(instance.manifest.name);
       pluginStates[instance.manifest.name] = { ...instance.publishedState };
+      pluginStatuses[instance.manifest.name] = instance.state;
+      pluginErrors[instance.manifest.name] = instance.error;
       const isActive = instance.state === 'active';
+      const shouldExposeUi = instance.state === 'loading' || instance.state === 'active';
 
       if (!isActive && instance.manifest.required) {
         requiredPluginsReady = false;
       }
 
-      if (!isActive) {
+      if (!shouldExposeUi) {
         continue;
       }
 
@@ -688,6 +693,8 @@ export class PluginManager {
       rendererStyles,
       pluginConfigs,
       pluginStates,
+      pluginStatuses,
+      pluginErrors,
       notifications,
       requiredPluginsReady,
       brandRequiredPluginNames: [...this.brandRequiredPluginNames],

@@ -12,6 +12,8 @@ export const PluginModalHost: FC = () => {
     getResolvedPluginConfig,
     getPluginState,
     rendererLoadCount,
+    getPluginStatus,
+    getPluginError,
     hasRendererScript,
     getPluginRendererStatus,
     getPluginRendererError,
@@ -31,9 +33,14 @@ export const PluginModalHost: FC = () => {
     <>
       {visibleModals.map((modal) => {
         const Component = getPluginComponent(modal.pluginName, modal.component);
+        const pluginStatus = getPluginStatus(modal.pluginName);
+        const pluginError = getPluginError(modal.pluginName);
         const rendererStatus = getPluginRendererStatus(modal.pluginName);
         const rendererError = getPluginRendererError(modal.pluginName);
-        const waitingForRenderer = !Component && hasRendererScript(modal.pluginName) && rendererStatus !== 'error';
+        const waitingForRenderer = !Component && (
+          pluginStatus === 'loading'
+          || (hasRendererScript(modal.pluginName) && rendererStatus !== 'error')
+        );
 
         const handleClose = () => {
           if (modal.closeable) {
@@ -99,10 +106,10 @@ export const PluginModalHost: FC = () => {
                 <div className="text-sm text-muted-foreground">
                   <p>Loading plugin UI for &quot;{modal.pluginName}&quot;...</p>
                 </div>
-              ) : rendererError ? (
+              ) : pluginError || rendererError ? (
                 <div className="text-sm text-muted-foreground">
                   <p>Failed to load the plugin UI for &quot;{modal.pluginName}&quot;.</p>
-                  <p className="mt-1 text-xs">{rendererError}</p>
+                  <p className="mt-1 text-xs">{pluginError || rendererError}</p>
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">

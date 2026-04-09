@@ -125,6 +125,8 @@ export type PluginUIState = {
   rendererStyles: PluginRendererStyle[];
   pluginConfigs: Record<string, Record<string, unknown>>;
   pluginStates: Record<string, Record<string, unknown>>;
+  pluginStatuses: Record<string, 'loading' | 'active' | 'error' | 'disabled'>;
+  pluginErrors: Record<string, string | undefined>;
   notifications: PluginNotificationDescriptor[];
   requiredPluginsReady: boolean;
   brandRequiredPluginNames: string[];
@@ -157,6 +159,8 @@ type PluginContextValue = {
   pluginEvents: PluginEventRecord[];
   navigationRequests: PluginNavigationRequestRecord[];
   rendererLoadCount: number;
+  getPluginStatus: (pluginName: string) => 'loading' | 'active' | 'error' | 'disabled';
+  getPluginError: (pluginName: string) => string | null;
   hasRendererScript: (pluginName: string) => boolean;
   getPluginRendererStatus: (pluginName: string) => PluginRendererStatus;
   getPluginRendererError: (pluginName: string) => string | null;
@@ -178,6 +182,8 @@ const PluginContext = createContext<PluginContextValue>({
   pluginEvents: [],
   navigationRequests: [],
   rendererLoadCount: 0,
+  getPluginStatus: () => 'disabled',
+  getPluginError: () => null,
   hasRendererScript: () => false,
   getPluginRendererStatus: () => 'idle',
   getPluginRendererError: () => null,
@@ -373,12 +379,25 @@ export function PluginProvider({ children }: { children: ReactNode }) {
     [uiState],
   );
 
+  const getPluginStatus = useCallback(
+    (pluginName: string): 'loading' | 'active' | 'error' | 'disabled' => uiState?.pluginStatuses?.[pluginName] ?? 'disabled',
+    [uiState],
+  );
+
+  const getPluginError = useCallback(
+    (pluginName: string): string | null => uiState?.pluginErrors?.[pluginName] ?? null,
+    [uiState],
+  );
+
   const getPluginRendererStatus = useCallback(
     (pluginName: string): PluginRendererStatus => {
+      const pluginStatus = getPluginStatus(pluginName);
+      if (pluginStatus === 'loading') return 'loading';
+      if (pluginStatus === 'error') return 'error';
       if (rendererStatuses[pluginName]) return rendererStatuses[pluginName];
       return hasRendererScript(pluginName) ? 'loading' : 'idle';
     },
-    [hasRendererScript, rendererStatuses],
+    [getPluginStatus, hasRendererScript, rendererStatuses],
   );
 
   const getPluginRendererError = useCallback(
@@ -475,6 +494,8 @@ export function PluginProvider({ children }: { children: ReactNode }) {
         pluginEvents,
         navigationRequests,
         rendererLoadCount,
+        getPluginStatus,
+        getPluginError,
         hasRendererScript,
         getPluginRendererStatus,
         getPluginRendererError,

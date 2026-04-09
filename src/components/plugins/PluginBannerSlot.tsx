@@ -10,6 +10,7 @@ export const PluginBannerSlot: FC = () => {
     sendBannerAction,
     getResolvedPluginConfig,
     getPluginState,
+    getPluginStatus,
     hasRendererScript,
     getPluginRendererStatus,
   } = usePlugins();
@@ -26,9 +27,12 @@ export const PluginBannerSlot: FC = () => {
         // If the banner has a custom component, render it
         if (banner.component) {
           const Component = getPluginComponent(banner.pluginName, banner.component);
+          const pluginStatus = getPluginStatus(banner.pluginName);
           const waitingForRenderer = !Component
-            && hasRendererScript(banner.pluginName)
-            && getPluginRendererStatus(banner.pluginName) !== 'error';
+            && (
+              pluginStatus === 'loading'
+              || (hasRendererScript(banner.pluginName) && getPluginRendererStatus(banner.pluginName) !== 'error')
+            );
           if (Component) {
             return (
               <Component

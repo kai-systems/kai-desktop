@@ -21,6 +21,8 @@ export const PluginPanelHost: FC<{
     getResolvedPluginConfig,
     getPluginState,
     rendererLoadCount,
+    getPluginStatus,
+    getPluginError,
     hasRendererScript,
     getPluginRendererStatus,
     getPluginRendererError,
@@ -29,9 +31,14 @@ export const PluginPanelHost: FC<{
   void rendererLoadCount;
 
   const Component = getPluginComponent(panel.pluginName, panel.component);
+  const pluginStatus = getPluginStatus(panel.pluginName);
+  const pluginError = getPluginError(panel.pluginName);
   const rendererStatus = getPluginRendererStatus(panel.pluginName);
   const rendererError = getPluginRendererError(panel.pluginName);
-  const waitingForRenderer = !Component && hasRendererScript(panel.pluginName) && rendererStatus !== 'error';
+  const waitingForRenderer = !Component && (
+    pluginStatus === 'loading'
+    || (hasRendererScript(panel.pluginName) && rendererStatus !== 'error')
+  );
   const widthClass = widthClassMap[panel.width ?? 'default'];
 
   return (
@@ -73,9 +80,9 @@ export const PluginPanelHost: FC<{
             <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
               Loading plugin UI for "{panel.pluginName}"...
             </div>
-          ) : rendererError ? (
+          ) : pluginError || rendererError ? (
             <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
-              Failed to load the plugin UI for "{panel.pluginName}": {rendererError}
+              Failed to load the plugin UI for "{panel.pluginName}": {pluginError || rendererError}
             </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">

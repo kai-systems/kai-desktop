@@ -259,6 +259,8 @@ export type PluginUIState = {
   rendererStyles: PluginRendererStyle[];
   pluginConfigs: Record<string, Record<string, unknown>>;
   pluginStates: PluginPublishedState;
+  pluginStatuses: Record<string, PluginState>;
+  pluginErrors: Record<string, string | undefined>;
   notifications: PluginNotificationDescriptor[];
   requiredPluginsReady: boolean;
   brandRequiredPluginNames: string[];

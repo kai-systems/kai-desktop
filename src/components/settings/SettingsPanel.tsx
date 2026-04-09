@@ -68,6 +68,8 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
     sendAction,
     getResolvedPluginConfig,
     getPluginState,
+    getPluginStatus,
+    getPluginError,
     hasRendererScript,
     getPluginRendererStatus,
     getPluginRendererError,
@@ -164,9 +166,14 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
         {pluginSections.map((pluginSection) => {
           if (activeSection !== pluginSection.key) return null;
           const Component = getPluginComponent(pluginSection.pluginName, pluginSection.component);
+          const pluginStatus = getPluginStatus(pluginSection.pluginName);
+          const pluginError = getPluginError(pluginSection.pluginName);
           const rendererStatus = getPluginRendererStatus(pluginSection.pluginName);
           const rendererError = getPluginRendererError(pluginSection.pluginName);
-          const waitingForRenderer = !Component && hasRendererScript(pluginSection.pluginName) && rendererStatus !== 'error';
+          const waitingForRenderer = !Component && (
+            pluginStatus === 'loading'
+            || (hasRendererScript(pluginSection.pluginName) && rendererStatus !== 'error')
+          );
 
           if (!Component) {
             if (waitingForRenderer) {
@@ -176,10 +183,10 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
                 </div>
               );
             }
-            if (rendererError) {
+            if (pluginError || rendererError) {
               return (
                 <div key={pluginSection.key} className="rounded-2xl border border-dashed border-border/70 bg-card/30 px-6 py-12 text-center text-sm text-muted-foreground">
-                  Failed to load the plugin UI for "{pluginSection.pluginName}": {rendererError}
+                  Failed to load the plugin UI for "{pluginSection.pluginName}": {pluginError || rendererError}
                 </div>
               );
             }
