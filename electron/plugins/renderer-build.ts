@@ -1,7 +1,6 @@
 import { createHash } from 'crypto';
 import { mkdirSync, existsSync, readFileSync, rmSync, copyFileSync, writeFileSync, statSync, readdirSync } from 'fs';
 import { dirname, extname, join, normalize, relative, resolve } from 'path';
-import { build } from 'esbuild';
 import type { PluginRendererBuild, PluginRendererScript, PluginRendererStyle } from './types.js';
 
 const CACHE_DIRNAME = 'plugin-renderers';
@@ -10,6 +9,8 @@ const MANIFEST_FILENAME = 'renderer-build.json';
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']);
 
 export const PLUGIN_RENDERER_PROTOCOL = 'plugin-renderer';
+
+let esbuildModulePromise: Promise<typeof import('esbuild')> | null = null;
 
 type RendererBuildManifest = {
   fileHash: string;
@@ -63,6 +64,22 @@ function inferContentType(filePath: string): string {
     '.yml': 'application/yaml; charset=utf-8',
   };
   return mimeTypes[ext] ?? 'application/octet-stream';
+}
+
+function configureEsbuildBinaryPath(): void {
+  if (process.env.ESBUILD_BINARY_PATH) return;
+
+  const binaryName = process.platform === 'win32' ? 'esbuild.exe' : 'esbuild';
+  const bundledBinaryPath = join(process.resourcesPath, 'esbuild', 'bin', binaryName);
+  if (existsSync(bundledBinaryPath)) {
+    process.env.ESBUILD_BINARY_PATH = bundledBinaryPath;
+  }
+}
+
+async function getEsbuild(): Promise<typeof import('esbuild')> {
+  configureEsbuildBinaryPath();
+  esbuildModulePromise ??= import('esbuild');
+  return esbuildModulePromise;
 }
 
 function rendererCacheRoot(appHome: string, pluginName: string, fileHash: string): string {
@@ -223,7 +240,8 @@ export async function buildPluginRendererBundle(options: {
 
   let result;
   try {
-    result = await build({
+    const esbuild = await getEsbuild();
+    result = await esbuild.build({
       absWorkingDir: options.pluginDir,
       assetNames: 'assets/[name]-[hash]',
       bundle: true,
