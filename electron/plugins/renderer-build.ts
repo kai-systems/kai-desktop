@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { mkdirSync, existsSync, readFileSync, rmSync, copyFileSync, writeFileSync, statSync, readdirSync } from 'fs';
 import { dirname, extname, join, normalize, relative, resolve } from 'path';
+import type * as Esbuild from 'esbuild';
 import type { PluginRendererBuild, PluginRendererScript, PluginRendererStyle } from './types.js';
 
 const CACHE_DIRNAME = 'plugin-renderers';
@@ -10,7 +11,7 @@ const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']
 
 export const PLUGIN_RENDERER_PROTOCOL = 'plugin-renderer';
 
-let esbuildModulePromise: Promise<typeof import('esbuild')> | null = null;
+let esbuildModulePromise: Promise<typeof Esbuild> | null = null;
 
 type RendererBuildManifest = {
   fileHash: string;
@@ -76,7 +77,7 @@ function configureEsbuildBinaryPath(): void {
   }
 }
 
-async function getEsbuild(): Promise<typeof import('esbuild')> {
+async function getEsbuild(): Promise<typeof Esbuild> {
   configureEsbuildBinaryPath();
   esbuildModulePromise ??= import('esbuild');
   return esbuildModulePromise;
