@@ -26,10 +26,13 @@ let gridConnections: [(Int, Int)] = [
 // Lit nodes and edges trace an "I" glyph across the 3x3 network.
 let litNodes: Set<Int> = [0, 1, 2, 4, 6, 7, 8]
 let litEdges: Set<String> = ["0-1", "1-2", "1-4", "4-7", "6-7", "7-8"]
-// Keep the tile inset for a standard Dock silhouette, but scale the internal
-// motif up slightly so it doesn't feel undersized inside the tile.
+// When we have a source icon asset, scale it up to remove the transparent
+// margin that makes macOS present it as an inset icon on top of a system plate.
+let sourceIconScale: CGFloat = 1.0 / 0.84
+// Fill the export canvas with the app tile so macOS doesn't treat the icon as
+// an inset glyph sitting on top of a separate system plate.
 let iconScale: CGFloat = 1.42
-let tileScale: CGFloat = 0.84
+let tileScale: CGFloat = 1.0
 
 func edgeKey(_ a: Int, _ b: Int) -> String {
     a < b ? "\(a)-\(b)" : "\(b)-\(a)"
@@ -71,7 +74,38 @@ func strokeLine(from: NSPoint, to: NSPoint, width: CGFloat, color: NSColor) {
     path.stroke()
 }
 
-func drawIcon(size: CGFloat) throws -> Data {
+func drawSourceIcon(size: CGFloat, sourceImage: NSImage) throws -> Data {
+    let image = NSImage(size: NSSize(width: size, height: size))
+    image.lockFocus()
+    guard let context = NSGraphicsContext.current?.cgContext else {
+        throw NSError(domain: "IconGen", code: 1)
+    }
+
+    context.setAllowsAntialiasing(true)
+    context.interpolationQuality = .high
+
+    let drawSize = size * sourceIconScale
+    let drawRect = NSRect(
+        x: (size - drawSize) / 2,
+        y: (size - drawSize) / 2,
+        width: drawSize,
+        height: drawSize
+    )
+    sourceImage.draw(in: drawRect, from: .zero, operation: .copy, fraction: 1.0)
+
+    image.unlockFocus()
+
+    guard
+        let tiff = image.tiffRepresentation,
+        let bitmap = NSBitmapImageRep(data: tiff),
+        let png = bitmap.representation(using: .png, properties: [:])
+    else {
+        throw NSError(domain: "IconGen", code: 2)
+    }
+    return png
+}
+
+func drawGeneratedIcon(size: CGFloat) throws -> Data {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()
     guard let context = NSGraphicsContext.current?.cgContext else {
@@ -143,8 +177,16 @@ func drawIcon(size: CGFloat) throws -> Data {
     return png
 }
 
-func writeIcon(size: CGFloat, to destination: URL) throws {
-    try drawIcon(size: size).write(to: destination)
+func drawIcon(size: CGFloat, sourceImage: NSImage?) throws -> Data {
+    if let sourceImage {
+        return try drawSourceIcon(size: size, sourceImage: sourceImage)
+    }
+
+    return try drawGeneratedIcon(size: size)
+}
+
+func writeIcon(size: CGFloat, to destination: URL, sourceImage: NSImage?) throws {
+    try drawIcon(size: size, sourceImage: sourceImage).write(to: destination)
 }
 
 func appendUInt16(_ value: UInt16, to data: inout Data) {
@@ -155,11 +197,6 @@ func appendUInt16(_ value: UInt16, to data: inout Data) {
 func appendUInt32(_ value: UInt32, to data: inout Data) {
     var little = value.littleEndian
     data.append(Data(bytes: &little, count: MemoryLayout<UInt32>.size))
-}
-
-func appendUInt32BE(_ value: UInt32, to data: inout Data) {
-    var big = value.bigEndian
-    data.append(Data(bytes: &big, count: MemoryLayout<UInt32>.size))
 }
 
 func createICO(from images: [(Int, Data)], to destination: URL) throws {
@@ -190,31 +227,20 @@ func createICO(from images: [(Int, Data)], to destination: URL) throws {
     try data.write(to: destination)
 }
 
-func createICNS(from images: [Int: Data], to destination: URL) throws {
-    let chunks: [(String, Data)] = [
-        ("ic04", images[16]!),
-        ("ic11", images[32]!),
-        ("ic05", images[32]!),
-        ("ic12", images[64]!),
-        ("ic07", images[128]!),
-        ("ic13", images[256]!),
-        ("ic08", images[256]!),
-        ("ic14", images[512]!),
-        ("ic09", images[512]!)
-    ]
+func createICNS(from iconset: URL, to destination: URL) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+    process.arguments = ["-c", "icns", iconset.path, "-o", destination.path]
+    try process.run()
+    process.waitUntilExit()
 
-    var body = Data()
-    for (type, pngData) in chunks {
-        body.append(type.data(using: .ascii)!)
-        appendUInt32BE(UInt32(pngData.count + 8), to: &body)
-        body.append(pngData)
+    guard process.terminationStatus == 0 else {
+        throw NSError(
+            domain: "IconGen",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "iconutil failed while creating \(destination.lastPathComponent)"]
+        )
     }
-
-    var file = Data()
-    file.append("icns".data(using: .ascii)!)
-    appendUInt32BE(UInt32(body.count + 8), to: &file)
-    file.append(body)
-    try file.write(to: destination)
 }
 
 let fileManager = FileManager.default
@@ -227,6 +253,7 @@ let iconPNG = buildDir.appendingPathComponent("icon.png")
 let iconICO = buildDir.appendingPathComponent("icon.ico")
 let iconICNS = buildDir.appendingPathComponent("icon.icns")
 let iconset = buildDir.appendingPathComponent("icon.iconset")
+let sourceIcon = buildDir.appendingPathComponent("icon-source.png")
 
 if fileManager.fileExists(atPath: iconset.path) {
     try fileManager.removeItem(at: iconset)
@@ -235,6 +262,10 @@ try fileManager.createDirectory(at: iconset, withIntermediateDirectories: true)
 defer {
     try? fileManager.removeItem(at: iconset)
 }
+
+let sourceImage = fileManager.fileExists(atPath: sourceIcon.path)
+    ? NSImage(contentsOf: sourceIcon)
+    : nil
 
 let iconsetSpecs: [(String, CGFloat)] = [
     ("icon_16x16.png", 16),
@@ -245,26 +276,24 @@ let iconsetSpecs: [(String, CGFloat)] = [
     ("icon_128x128@2x.png", 256),
     ("icon_256x256.png", 256),
     ("icon_256x256@2x.png", 512),
-    ("icon_512x512.png", 512)
+    ("icon_512x512.png", 512),
+    ("icon_512x512@2x.png", 1024)
 ]
 
-var pngsBySize: [Int: Data] = [:]
-
 for (name, size) in iconsetSpecs {
-    let pngData = try drawIcon(size: size)
+    let pngData = try drawIcon(size: size, sourceImage: sourceImage)
     try pngData.write(to: iconset.appendingPathComponent(name))
-    pngsBySize[Int(size)] = pngData
 }
 
-try writeIcon(size: 1024, to: master)
-try writeIcon(size: 512, to: iconPNG)
+try writeIcon(size: 1024, to: master, sourceImage: sourceImage)
+try writeIcon(size: 512, to: iconPNG, sourceImage: sourceImage)
 
 let icoSizes = [16, 24, 32, 48, 64, 128, 256]
 let icoImages = try icoSizes.map { size in
-    (size, try drawIcon(size: CGFloat(size)))
+    (size, try drawIcon(size: CGFloat(size), sourceImage: sourceImage))
 }
 try createICO(from: icoImages, to: iconICO)
-try createICNS(from: pngsBySize, to: iconICNS)
+try createICNS(from: iconset, to: iconICNS)
 
 print(master.path)
 print(iconPNG.path)
