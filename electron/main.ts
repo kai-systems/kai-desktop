@@ -25,6 +25,7 @@ import { registerUsageHandlers } from './ipc/usage.js';
 import { applyBrandUserAgent, withBrandUserAgent } from './utils/user-agent.js';
 import { bootstrapSuperpowers } from './tools/superpowers-bootstrap.js';
 import { bootstrapBundledPlugins, getBrandRequiredPluginNames } from './plugins/plugin-bootstrap.js';
+import { primeResolvedShellPath } from './utils/shell-env.js';
 
 const APP_HOME = join(homedir(), '.' + __BRAND_APP_SLUG);
 
@@ -345,6 +346,10 @@ if (gotSingleInstanceLock) {
     ensureAppHome();
     applyTheme();
     buildMenu();
+    const shellPathReady = primeResolvedShellPath().catch((error) => {
+      console.warn(`[${__BRAND_PRODUCT_NAME}] Failed to resolve shell PATH, using inherited environment:`, error);
+      return process.env.PATH ?? '';
+    });
 
     // Request microphone permission on macOS (needed for speech-to-text dictation)
     if (process.platform === 'darwin') {
@@ -402,10 +407,14 @@ if (gotSingleInstanceLock) {
       const newCliToolsFp = JSON.stringify(config.cliTools ?? []);
       if (newCliToolsFp !== lastCliToolsFingerprint) {
         lastCliToolsFingerprint = newCliToolsFp;
-        const cliTools = buildCliTools(getConfig);
-        updateCliTools(cliTools);
-        syncRealtimeTools();
-        console.info(`[${__BRAND_PRODUCT_NAME}] CLI tools hot-reload: ${cliTools.length} tools`);
+        void shellPathReady.then(() => {
+          const cliTools = buildCliTools(getConfig);
+          updateCliTools(cliTools);
+          syncRealtimeTools();
+          console.info(`[${__BRAND_PRODUCT_NAME}] CLI tools hot-reload: ${cliTools.length} tools`);
+        }).catch((err) => {
+          console.error(`[${__BRAND_PRODUCT_NAME}] CLI tools hot-reload failed:`, err);
+        });
       }
 
       // Display list change detection — auto-update maxDimension when allowed displays change
@@ -694,7 +703,7 @@ if (gotSingleInstanceLock) {
     createWindow();
 
     // Initialize tools asynchronously
-    buildToolRegistry(getConfig, APP_HOME).then((tools) => {
+    shellPathReady.then(() => buildToolRegistry(getConfig, APP_HOME)).then((tools) => {
       const pluginTools = pluginManager.getAllPluginTools();
       const allTools = [...tools, ...pluginTools];
       registerTools(allTools);

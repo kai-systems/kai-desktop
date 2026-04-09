@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getComputerUseManager } from '../computer-use/service.js';
+import { primeResolvedShellPath } from '../utils/shell-env.js';
 
 type ConversationMessageLike = {
   id?: string;
@@ -182,6 +183,7 @@ export async function buildToolRegistry(getConfig: () => AppConfig, appHome?: st
   // CLI tools (gh/git, brew, wget, jq, tree, python, ollama, klist, jfrog)
   // Only included if the binary exists on the system
   if (config?.tools?.shell?.enabled !== false) {
+    await primeResolvedShellPath();
     tools.push(...buildCliTools(getConfig));
   }
 

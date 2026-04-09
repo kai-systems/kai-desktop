@@ -13,6 +13,7 @@ import type {
   ComputerUsePermissions,
 } from '../../shared/computer-use.js';
 import { LOCAL_MACOS_HELPER_SOURCE } from './helpers/local-macos-helper-source.js';
+import { getResolvedProcessEnv } from '../utils/shell-env.js';
 
 const execFileAsync = promisify(execFile);
 const LOCAL_MACOS_PRIVACY_URLS: Record<ComputerUsePermissionSection, string> = {
@@ -61,20 +62,7 @@ export function resolveCompiledHelperBinary(): string | null {
  * find each other even in that context.
  */
 export function buildSwiftFallbackEnv(): NodeJS.ProcessEnv {
-  const basePaths = [
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-    '/usr/local/bin',
-    '/Library/Developer/CommandLineTools/usr/bin',
-  ];
-
-  const existingPath = process.env.PATH ?? '';
-  const pathSet = new Set([...basePaths, ...existingPath.split(':').filter(Boolean)]);
-  const mergedPath = [...pathSet].join(':');
-
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: mergedPath };
+  const env = getResolvedProcessEnv(process.env);
 
   // Set DEVELOPER_DIR if not already present — helps xcrun locate the SDK
   if (!env.DEVELOPER_DIR) {

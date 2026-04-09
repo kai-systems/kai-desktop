@@ -5,6 +5,7 @@ import { homedir } from 'os';
 import { appConfigSchema, type AppConfig } from '../config/schema.js';
 import { broadcastToAllWindows } from '../utils/window-send.js';
 import { binaryExists } from '../tools/cli-tools.js';
+import { primeResolvedShellPath } from '../utils/shell-env.js';
 
 export type { AppConfig } from '../config/schema.js';
 
@@ -807,7 +808,8 @@ export function registerConfigHandlers(
 
   ipcMain.handle('platform:homedir', () => appHome);
 
-  ipcMain.handle('cli-tools:check-binaries', (_event, binaryNames: string[]) => {
+  ipcMain.handle('cli-tools:check-binaries', async (_event, binaryNames: string[]) => {
+    await primeResolvedShellPath();
     const results: Record<string, boolean> = {};
     for (const name of binaryNames) {
       results[name] = binaryExists(name);

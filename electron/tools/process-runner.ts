@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import type { ToolExecutionContext } from './types.js';
 import type { AppConfig } from '../config/schema.js';
+import { getResolvedProcessEnv, primeResolvedShellPath } from '../utils/shell-env.js';
 
 export type ProcessStreamingConfig = {
   enabled: boolean;
@@ -187,6 +188,8 @@ export type RunProcessResult = {
 
 export async function runCommandWithStreaming(options: RunProcessOptions): Promise<RunProcessResult> {
   const { command, cwd, env, timeoutMs, context, streaming } = options;
+  await primeResolvedShellPath();
+  const effectiveEnv = getResolvedProcessEnv(env);
 
   const stdoutState: StreamState = {
     output: '',
@@ -216,7 +219,7 @@ export async function runCommandWithStreaming(options: RunProcessOptions): Promi
 
   const child = spawn(command, {
     cwd,
-    env,
+    env: effectiveEnv,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',

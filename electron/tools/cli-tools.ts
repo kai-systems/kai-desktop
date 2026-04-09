@@ -1,17 +1,13 @@
 import { z } from 'zod';
-import { spawnSync } from 'node:child_process';
 import type { AppConfig } from '../config/schema.js';
 import type { ToolDefinition } from './types.js';
 import { runCommandWithStreaming, resolveProcessStreamingConfig } from './process-runner.js';
 import { runToolExecution } from './execution.js';
 import { isCommandAllowed } from './shell.js';
+import { binaryExistsInResolvedPath } from '../utils/shell-env.js';
 
 export function binaryExists(name: string): boolean {
-  const isWindows = process.platform === 'win32';
-  const result = isWindows
-    ? spawnSync('where', [name], { stdio: 'ignore', shell: false })
-    : spawnSync('command', ['-v', name], { stdio: 'ignore', shell: true });
-  return result.status === 0;
+  return binaryExistsInResolvedPath(name);
 }
 
 type CliToolSpec = {
