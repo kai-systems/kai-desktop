@@ -236,8 +236,14 @@ jobs:
             exit 1
           fi
 
-          echo "path=$artifact_path" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$artifact_path")" >> "$GITHUB_OUTPUT"
+          # Strip version and arch for a stable download URL (e.g. Kai-1.0.10-arm64.dmg -> Kai.dmg)
+          name="$(basename "$artifact_path")"
+          stable_name="$(echo "$name" | sed 's/-[0-9][0-9.]*-[a-z0-9]*\./\./')"
+          stable_path="dist/${stable_name}"
+          mv "$artifact_path" "$stable_path"
+
+          echo "path=$stable_path" >> "$GITHUB_OUTPUT"
+          echo "name=$stable_name" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
