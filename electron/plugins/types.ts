@@ -434,6 +434,8 @@ export type PluginAuthWindowOptions = {
   width?: number;
   height?: number;
   timeoutMs?: number;
+  showOnCreate?: boolean;
+  showAfterMs?: number;
   successMessage?: string;
   extractParams?: string[];
 };

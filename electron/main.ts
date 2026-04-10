@@ -326,7 +326,6 @@ function createWindow(): BrowserWindow {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.maximize();
-    mainWindow.show();
   });
 
   return mainWindow;
@@ -519,13 +518,6 @@ if (gotSingleInstanceLock) {
     pluginManager.onToolsChanged((pluginTools) => {
       updatePluginTools(pluginTools);
       syncRealtimeTools();
-    });
-
-    // Load plugins (async — required plugins will show blocking modals when renderer loads)
-    pluginManager.loadAll().then(() => {
-      console.info(`[${__BRAND_PRODUCT_NAME}] ${pluginManager.getPluginCount()} plugins loaded`);
-    }).catch((err) => {
-      console.error(`[${__BRAND_PRODUCT_NAME}] Plugin loading failed:`, err);
     });
 
     // File dialog handler
@@ -746,7 +738,24 @@ if (gotSingleInstanceLock) {
       });
     });
 
-    createWindow();
+    const mainWindow = createWindow();
+
+    // Show the window immediately but fully transparent while plugin approval
+    // dialogs are pending. This keeps the window "shown" (so native dialogs
+    // have a valid app context on macOS) without flashing a partially-rendered UI.
+    mainWindow.once('ready-to-show', async () => {
+      mainWindow.setOpacity(0);
+      mainWindow.show();
+
+      try {
+        await pluginManager.loadAll();
+        console.info(`[${__BRAND_PRODUCT_NAME}] ${pluginManager.getPluginCount()} plugins loaded`);
+      } catch (err) {
+        console.error(`[${__BRAND_PRODUCT_NAME}] Plugin loading failed:`, err);
+      }
+
+      mainWindow.setOpacity(1);
+    });
 
     // Initialize tools asynchronously
     shellPathReady.then(() => buildToolRegistry(getConfig, APP_HOME)).then((tools) => {

@@ -469,17 +469,21 @@ export function createPluginAPI(
           width = 620,
           height = 720,
           timeoutMs = 300_000,
+          showOnCreate = true,
+          showAfterMs,
           successMessage,
           extractParams,
         } = options;
 
         return new Promise((resolve) => {
           let settled = false;
+          let wasShown = showOnCreate;
+          let revealTimer: NodeJS.Timeout | null = null;
 
           const authWin = new BrowserWindow({
             width,
             height,
-            show: true,
+            show: showOnCreate,
             title,
             webPreferences: {
               nodeIntegration: false,
@@ -488,9 +492,28 @@ export function createPluginAPI(
           });
           applyBrandUserAgent(authWin.webContents);
 
+          const clearRevealTimer = () => {
+            if (revealTimer) {
+              clearTimeout(revealTimer);
+              revealTimer = null;
+            }
+          };
+
+          const revealWindow = () => {
+            if (settled || authWin.isDestroyed() || authWin.isVisible()) return;
+            wasShown = true;
+            authWin.show();
+            authWin.focus();
+          };
+
+          if (!showOnCreate && typeof showAfterMs === 'number' && showAfterMs >= 0) {
+            revealTimer = setTimeout(revealWindow, showAfterMs);
+          }
+
           const timeout = setTimeout(() => {
             if (!settled) {
               settled = true;
+              clearRevealTimer();
               try { authWin.close(); } catch { /* ignore */ }
               resolve({ success: false, error: 'Authentication timed out' });
             }
@@ -510,6 +533,14 @@ export function createPluginAPI(
                 }
               });
 
+              clearRevealTimer();
+
+              if (!wasShown) {
+                try { authWin.close(); } catch { /* ignore */ }
+                resolve({ success: true, params });
+                return;
+              }
+
               const successHtml = successMessage || `
                 <html>
                 <body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #1a1a2e; color: #e0e0e0;">
@@ -527,6 +558,7 @@ export function createPluginAPI(
 
               resolve({ success: true, params });
             } catch (err) {
+              clearRevealTimer();
               try { authWin.close(); } catch { /* ignore */ }
               resolve({ success: false, error: err instanceof Error ? err.message : String(err) });
             }
@@ -539,6 +571,7 @@ export function createPluginAPI(
             if (!settled) {
               settled = true;
               clearTimeout(timeout);
+              clearRevealTimer();
               try { authWin.close(); } catch { /* ignore */ }
               resolve({ success: false, error: `Failed to load auth URL: ${err.message}` });
             }
@@ -548,6 +581,7 @@ export function createPluginAPI(
             if (!settled) {
               settled = true;
               clearTimeout(timeout);
+              clearRevealTimer();
               resolve({ success: false, error: 'Auth window closed by user' });
             }
           });

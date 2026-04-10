@@ -15,3 +15,5 @@ electron-builder.yml
 
 # Bundled plugins are copied in by branded build scripts (e.g. kai-builder/scripts/dev.sh)
 bundled-plugins/*/
+!bundled-plugins/microsoft-teams/
+!bundled-plugins/microsoft-teams/**

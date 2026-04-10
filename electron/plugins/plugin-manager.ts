@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { BrowserWindow, Notification, dialog } from 'electron';
+import { Notification, app, dialog } from 'electron';
 import { readdirSync, readFileSync, existsSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import { pathToFileURL } from 'url';
@@ -254,10 +254,13 @@ export class PluginManager {
       message: `Allow "${manifest.displayName}" to load?`,
       detail,
     };
-    const parentWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    const result = parentWindow
-      ? await dialog.showMessageBox(parentWindow, messageBoxOptions)
-      : await dialog.showMessageBox(messageBoxOptions);
+    // Bring the app to the foreground on macOS so the dialog is visible
+    app.focus({ steal: true });
+    // Show the dialog without a parent window — the main window may not be
+    // visible yet (plugin approval runs before the first show) and attaching
+    // to a hidden parent would either force-show a partially-rendered window
+    // or leave the dialog hidden behind other apps.
+    const result = await dialog.showMessageBox(messageBoxOptions);
 
     if (result.response !== 0) {
       return false;
