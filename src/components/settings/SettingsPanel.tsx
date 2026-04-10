@@ -17,6 +17,7 @@ import { RealtimeSettings } from './RealtimeSettings';
 import { ComputerUseSettings } from './ComputerUseSettings';
 import { MediaGenerationSettings } from './MediaGenerationSettings';
 import { UsageDashboard } from './UsageDashboard';
+import { WebServerSettings } from './WebServerSettings';
 import type { SettingsProps } from './shared';
 import { usePluginSettingsSections } from '@/components/plugins/PluginSettingsSections';
 import { getPluginComponent } from '@/components/plugins/PluginComponentRegistry';
@@ -37,6 +38,7 @@ type SettingsSection =
   | 'realtime'
   | 'media-generation'
   | 'computer-use'
+  | 'web-server'
   | 'advanced'
   | 'usage';
 
@@ -55,6 +57,7 @@ const sections: Array<{ key: SettingsSection; label: string }> = [
   { key: 'realtime', label: 'Realtime Audio' },
   { key: 'media-generation', label: 'Media Generation' },
   { key: 'computer-use', label: 'Computer Use' },
+  { key: 'web-server', label: 'Web UI' },
   { key: 'advanced', label: 'Advanced' },
   { key: 'usage', label: 'Usage' },
 ];
@@ -160,6 +163,7 @@ export const SettingsPanel: FC<{ onClose: () => void }> = ({ onClose }) => {
         {activeSection === 'realtime' && <RealtimeSettings config={config} updateConfig={updateConfig} />}
         {activeSection === 'media-generation' && <MediaGenerationSettings config={config} updateConfig={updateConfig} />}
         {activeSection === 'computer-use' && <ComputerUseSettings config={config} updateConfig={updateConfig} />}
+        {activeSection === 'web-server' && <WebServerSettings config={config} updateConfig={updateConfig} />}
         {activeSection === 'advanced' && <AdvancedSettings config={config} updateConfig={updateConfig} />}
         {activeSection === 'usage' && <UsageDashboard config={config} updateConfig={updateConfig} />}
 

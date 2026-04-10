@@ -12,6 +12,7 @@ import { getComputerUseManager } from '../computer-use/service.js';
 import { getLocalMacDisplayLayout, probeInputMonitoring } from '../computer-use/permissions.js';
 import type { AppConfig } from '../config/schema.js';
 import { readConversationStore, writeConversationStore, broadcastConversationChange } from './conversations.js';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -83,6 +84,7 @@ function broadcast(event: ComputerUseEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('computer-use:event', event);
   }
+  broadcastToWebClients('computer-use:event', event);
 }
 
 /**
@@ -216,6 +218,7 @@ export function registerComputerUseHandlers(
       if (!mainWin.isVisible()) mainWin.show();
       mainWin.focus();
       mainWin.webContents.send('computer-use:focus-thread');
+      broadcastToWebClients('computer-use:focus-thread', undefined);
     }
 
     return { ok: true };

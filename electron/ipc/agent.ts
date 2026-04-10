@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron';
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import { join } from 'path';
 import { resolveModelForThread, resolveModelCatalog, resolveStreamConfig, type ModelCatalogEntry } from '../agent/model-catalog.js';
 import { streamAgentResponse, streamWithFallback } from '../agent/mastra-agent.js';
@@ -56,6 +57,7 @@ function broadcastStreamEvent(event: StreamEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('agent:stream-event', event);
   }
+  broadcastToWebClients('agent:stream-event', event);
 }
 
 function mergeAbortSignals(primary?: AbortSignal, secondary?: AbortSignal): AbortSignal | undefined {

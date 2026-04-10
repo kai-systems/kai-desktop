@@ -9,6 +9,7 @@
 
 import { BrowserWindow } from 'electron';
 import WebSocket from 'ws';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { AppConfig } from '../config/schema.js';
 import { resolveModelForThread } from '../agent/model-catalog.js';
@@ -1047,6 +1048,7 @@ export class RealtimeSession {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send('realtime:event', event);
     }
+    broadcastToWebClients('realtime:event', event);
   }
 
   /** Broadcast on the agent:stream-event channel (for RuntimeProvider/thread integration) */
@@ -1054,6 +1056,7 @@ export class RealtimeSession {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send('agent:stream-event', event);
     }
+    broadcastToWebClients('agent:stream-event', event);
   }
 }
 

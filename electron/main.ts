@@ -27,6 +27,8 @@ import { bootstrapSuperpowers } from './tools/superpowers-bootstrap.js';
 import { bootstrapBundledPlugins, getBrandRequiredPluginNames } from './plugins/plugin-bootstrap.js';
 import { PLUGIN_RENDERER_PROTOCOL } from './plugins/renderer-build.js';
 import { primeResolvedShellPath } from './utils/shell-env.js';
+import { installIpcCapture } from './web-server/ipc-bridge.js';
+import { startWebServer, stopWebServer, restartWebServer } from './web-server/web-server.js';
 
 const APP_HOME = join(homedir(), '.' + __BRAND_APP_SLUG);
 
@@ -383,6 +385,7 @@ if (gotSingleInstanceLock) {
     let lastSkillsFingerprint = JSON.stringify(getConfig().skills?.enabled ?? []);
     let lastCliToolsFingerprint = JSON.stringify(getConfig().cliTools ?? []);
     let lastDisplayFingerprint = JSON.stringify(getConfig().computerUse?.localMacos?.allowedDisplays ?? []);
+    let lastWebServerFingerprint = JSON.stringify(getConfig().webServer ?? {});
     const syncRealtimeTools = (): void => {
       updateActiveRealtimeSessionTools(getRegisteredTools());
     };
@@ -457,11 +460,28 @@ if (gotSingleInstanceLock) {
         }
       }
 
+      // Web server hot-reload
+      const newWebServerFp = JSON.stringify(config.webServer ?? {});
+      if (newWebServerFp !== lastWebServerFingerprint) {
+        lastWebServerFingerprint = newWebServerFp;
+        const wsConfig = config.webServer;
+        if (wsConfig?.enabled) {
+          restartWebServer(wsConfig)
+            .then(() => console.info(`[${__BRAND_PRODUCT_NAME}] Web UI server restarted on port ${wsConfig.port}`))
+            .catch((err) => console.error(`[${__BRAND_PRODUCT_NAME}] Web server restart failed:`, err));
+        } else {
+          stopWebServer()
+            .then(() => console.info(`[${__BRAND_PRODUCT_NAME}] Web UI server stopped`))
+            .catch((err) => console.error(`[${__BRAND_PRODUCT_NAME}] Web server stop failed:`, err));
+        }
+      }
+
       // Plugin config change forwarding
       pluginManager.onConfigChanged(config);
     };
 
-    // Register IPC handlers
+    // Register IPC handlers (capture must be installed first for web UI bridge)
+    installIpcCapture(ipcMain);
     const { setConfig } = registerConfigHandlers(ipcMain, APP_HOME, handleConfigChanged);
     registerAgentHandlers(ipcMain, APP_HOME);
     registerConversationHandlers(ipcMain, APP_HOME, getConfig);
@@ -766,6 +786,14 @@ if (gotSingleInstanceLock) {
 
       // Register realtime handlers (needs tool registry)
       registerRealtimeHandlers(ipcMain, getConfig, getRegisteredTools, APP_HOME);
+
+      // Start web UI server if enabled
+      const webServerConfig = getConfig().webServer;
+      if (webServerConfig?.enabled) {
+        startWebServer(webServerConfig)
+          .then(() => console.info(`[${__BRAND_PRODUCT_NAME}] Web UI server started on port ${webServerConfig.port}`))
+          .catch((err) => console.error(`[${__BRAND_PRODUCT_NAME}] Web server failed to start:`, err));
+      }
     }).catch((err) => {
       console.error(`[${__BRAND_PRODUCT_NAME}] Failed to build tool registry:`, err);
     });
@@ -785,6 +813,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Stop web UI server
+  stopWebServer().catch(() => {});
   // Best-effort plugin cleanup (don't block quit on failures)
   pluginManagerRef?.unloadAll().catch((err) => {
     console.error(`[${__BRAND_PRODUCT_NAME}] Plugin cleanup error:`, err);

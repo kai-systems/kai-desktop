@@ -7,6 +7,7 @@
  */
 
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import { z } from 'zod';
 import { streamAgentResponse } from './mastra-agent.js';
 import type { StreamEvent } from './mastra-agent.js';
@@ -67,6 +68,7 @@ function broadcastSubAgentEvent(event: SubAgentEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('agent:stream-event', event);
   }
+  broadcastToWebClients('agent:stream-event', event);
 }
 
 /** Sub-agent control signal — set by the sub_agent_control tool */

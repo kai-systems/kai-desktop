@@ -106,6 +106,11 @@ function getDefaultConfig() {
       theme: 'system' as const,
       sidebarWidth: 280,
     },
+    webServer: {
+      enabled: false,
+      port: 5243,
+      auth: { mode: 'anonymous' as const, username: '', password: '' },
+    },
     audio: {
       provider: 'native' as const,
       azure: {
@@ -624,6 +629,7 @@ export function desktopConfigPayload(config: AppConfig): Record<string, unknown>
     plugins: config.plugins,
     pluginApprovals: config.pluginApprovals,
     ui: config.ui,
+    webServer: config.webServer,
     audio: config.audio,
     realtime: config.realtime,
     computerUse: config.computerUse,

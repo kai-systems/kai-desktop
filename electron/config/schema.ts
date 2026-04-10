@@ -352,6 +352,16 @@ const cliToolSchema = z.object({
   builtIn: z.boolean().optional(),
 });
 
+const webServerConfigSchema = z.object({
+  enabled: z.boolean(),
+  port: z.number().positive(),
+  auth: z.object({
+    mode: z.enum(['anonymous', 'password']),
+    username: z.string(),
+    password: z.string(),
+  }),
+});
+
 export const appConfigSchema = z.object({
   models: modelsConfigSchema,
   memory: memoryConfigSchema,
@@ -383,6 +393,7 @@ export const appConfigSchema = z.object({
     theme: z.enum(['light', 'dark', 'system']),
     sidebarWidth: z.number().positive(),
   }),
+  webServer: webServerConfigSchema,
   audio: audioConfigSchema,
   realtime: realtimeConfigSchema,
   computerUse: computerUseConfigSchema,

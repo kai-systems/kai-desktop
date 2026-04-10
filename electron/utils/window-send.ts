@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 
 export function safelySendToWindow(win: BrowserWindow, channel: string, data?: unknown): boolean {
   try {
@@ -24,5 +25,6 @@ export function broadcastToAllWindows(channel: string, data?: unknown): number {
       sentCount += 1;
     }
   }
+  broadcastToWebClients(channel, data);
   return sentCount;
 }

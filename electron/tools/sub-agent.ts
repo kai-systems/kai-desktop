@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { join } from 'path';
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import { runSubAgent, getActiveSubAgentCount } from '../agent/sub-agent-runner.js';
 import type { SubAgentEvent } from '../agent/sub-agent-runner.js';
 import { streamAgentResponse } from '../agent/mastra-agent.js';
@@ -40,6 +41,7 @@ function broadcastEvent(event: SubAgentEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('agent:stream-event', event);
   }
+  broadcastToWebClients('agent:stream-event', event);
 }
 
 /** Send a follow-up to a sub-agent by its parent toolCallId (for observer use) */

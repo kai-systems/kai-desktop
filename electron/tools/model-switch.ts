@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import type { ToolDefinition } from './types.js';
 import type { AppConfig } from '../config/schema.js';
 import { persistAppModels, readEffectiveConfig } from '../ipc/config.js';
@@ -44,6 +45,7 @@ export function createModelSwitchTool(appHome: string): ToolDefinition {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('agent:model-switched', model_key);
       }
+      broadcastToWebClients('agent:model-switched', model_key);
 
       return {
         success: true,

@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron';
 import { BrowserWindow } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { AppConfig } from '../config/schema.js';
@@ -68,6 +69,7 @@ export function broadcastConversationChange(store: ConversationsStore): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('conversations:changed', store);
   }
+  broadcastToWebClients('conversations:changed', store);
 }
 
 export function registerConversationHandlers(ipcMain: IpcMain, appHome: string, getConfig?: () => AppConfig): void {

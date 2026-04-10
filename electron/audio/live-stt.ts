@@ -18,6 +18,7 @@
 
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
 import { BrowserWindow, type IpcMain } from 'electron';
+import { broadcastToWebClients } from '../web-server/web-clients.js';
 
 let recognizer: sdk.SpeechRecognizer | null = null;
 let pushStream: sdk.PushAudioInputStream | null = null;
@@ -184,6 +185,7 @@ function broadcast(channel: string, data: string) {
       try { win.webContents.send(channel, data); } catch { /* ignore */ }
     }
   }
+  broadcastToWebClients(channel, data);
 }
 
 function cleanup() {
