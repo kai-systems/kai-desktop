@@ -201,7 +201,18 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
     setIsMuted((prev) => {
       const next = !prev;
       mutedRef.current = next;
-      // Mute/unmute browser mic tracks directly for immediate effect
+      if (next && callActiveRef.current) {
+        // Send a short burst of silence so the server-side VAD detects
+        // end-of-speech immediately instead of waiting for its timeout.
+        const silenceFrames = 4800; // 300ms at 16kHz
+        const silence = new Int16Array(silenceFrames);
+        const bytes = new Uint8Array(silence.buffer);
+        let bin = '';
+        for (let j = 0; j < bytes.length; j++) bin += String.fromCharCode(bytes[j]);
+        const silenceB64 = btoa(bin);
+        app.realtime.sendAudio(silenceB64);
+      }
+      // Mute/unmute browser mic tracks directly
       if (browserMicRef.current) {
         browserMicRef.current.stream.getAudioTracks().forEach((t) => { t.enabled = !next; });
       }
