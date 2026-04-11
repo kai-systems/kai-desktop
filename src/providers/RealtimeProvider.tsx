@@ -133,8 +133,8 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
   const cleanup = useCallback(() => {
     callActiveRef.current = false;
 
-    // Play disconnect tone before tearing everything down
-    playDisconnectTone(realtimeConfig?.outputDeviceId);
+    // Play disconnect tone — skip device routing on web (desktop device IDs aren't valid)
+    playDisconnectTone(isWebBridge ? undefined : realtimeConfig?.outputDeviceId);
 
     // Stop ringtone
     if (ringDelayTimerRef.current) {
@@ -203,15 +203,29 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
 
     try {
       // Initialize audio player
+      // On web/mobile, desktop-specific device IDs are invalid — validate before using
+      let outputDeviceId = realtimeConfig?.outputDeviceId;
+      if (isWebBridge && outputDeviceId) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const outputExists = devices.some((d) => d.kind === 'audiooutput' && d.deviceId === outputDeviceId);
+          if (!outputExists) {
+            console.info('[RealtimeProvider] Configured output device not found on this browser, falling back to default');
+            outputDeviceId = undefined;
+          }
+        } catch {
+          outputDeviceId = undefined;
+        }
+      }
       const player = new RealtimeAudioPlayer();
-      await player.init(realtimeConfig?.outputDeviceId);
+      await player.init(outputDeviceId);
       playerRef.current = player;
 
       // Start ringtone after 1 second if still preparing
       ringDelayTimerRef.current = setTimeout(() => {
         const tone = new Ringtone();
         ringtoneRef.current = tone;
-        void tone.start(realtimeConfig?.outputDeviceId);
+        void tone.start(outputDeviceId);
       }, 1000);
 
       // Start the realtime session (includes memory gathering — the "ringing" phase)
@@ -236,11 +250,24 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
       lastUserSpeechRef.current = Date.now();
 
       // Start mic capture
-      const inputDeviceId = realtimeConfig?.inputDeviceId;
+      let inputDeviceId = realtimeConfig?.inputDeviceId;
       if (isWebBridge) {
         // Browser audio capture: getUserMedia → ScriptProcessorNode → PCM16 base64
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error('Microphone access requires HTTPS. Enable TLS in Web UI settings.');
+        }
+        // Validate input device exists on this browser before using exact constraint
+        if (inputDeviceId) {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const inputExists = devices.some((d) => d.kind === 'audioinput' && d.deviceId === inputDeviceId);
+            if (!inputExists) {
+              console.info('[RealtimeProvider] Configured input device not found on this browser, falling back to default');
+              inputDeviceId = undefined;
+            }
+          } catch {
+            inputDeviceId = undefined;
+          }
         }
         const constraints: MediaStreamConstraints = {
           audio: {
