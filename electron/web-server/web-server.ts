@@ -3,7 +3,7 @@ import http from 'http';
 import https from 'https';
 import { join, extname } from 'path';
 import { homedir } from 'os';
-import { readFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'fs';
 import type { Duplex } from 'stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { webClients } from './web-clients.js';
@@ -41,14 +41,72 @@ try {
   // Favicon not available — non-fatal.
 }
 
-/** Active session tokens for cookie-based auth. Cleared on server restart. */
-const sessionTokens = new Set<string>();
+/** Session cookie / token lifetime: 24 hours. */
+const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const SESSION_MAX_AGE_SECS = SESSION_LIFETIME_MS / 1000;
 
-/** Token expiry timestamps (token -> expiry epoch ms). */
-const tokenExpiry = new Map<string, number>();
+/** One-time login-token lifetime (QR codes): 5 minutes. */
+const LOGIN_TOKEN_LIFETIME_MS = 5 * 60 * 1000;
 
-/** Default token lifetime: 5 minutes. */
-const TOKEN_LIFETIME_MS = 5 * 60 * 1000;
+/* ── File-backed session store ─────────────────────────────────────── */
+
+const SESSIONS_DIR = join(homedir(), '.' + __BRAND_APP_SLUG);
+const SESSIONS_PATH = join(SESSIONS_DIR, 'sessions.json');
+
+type SessionStore = Record<string, number>; // token -> expiry epoch ms
+
+function loadSessions(): SessionStore {
+  try {
+    if (!existsSync(SESSIONS_PATH)) return {};
+    return JSON.parse(readFileSync(SESSIONS_PATH, 'utf-8')) as SessionStore;
+  } catch {
+    return {};
+  }
+}
+
+function saveSessions(store: SessionStore): void {
+  try {
+    mkdirSync(SESSIONS_DIR, { recursive: true });
+    writeFileSync(SESSIONS_PATH, JSON.stringify(store), 'utf-8');
+  } catch {
+    // Non-fatal — sessions degrade to in-memory-only.
+  }
+}
+
+/** Prune expired entries and return the cleaned store. */
+function pruneExpired(store: SessionStore): SessionStore {
+  const now = Date.now();
+  const pruned: SessionStore = {};
+  for (const [token, expiry] of Object.entries(store)) {
+    if (expiry > now) pruned[token] = expiry;
+  }
+  return pruned;
+}
+
+/** In-memory mirror of the on-disk store, loaded once at startup. */
+let sessions: SessionStore = pruneExpired(loadSessions());
+saveSessions(sessions); // persist any pruning
+
+function addSession(token: string, expiresAt: number): void {
+  sessions[token] = expiresAt;
+  saveSessions(sessions);
+}
+
+function hasSession(token: string): boolean {
+  const expiry = sessions[token];
+  if (!expiry) return false;
+  if (Date.now() > expiry) {
+    delete sessions[token];
+    saveSessions(sessions);
+    return false;
+  }
+  return true;
+}
+
+function deleteSession(token: string): void {
+  delete sessions[token];
+  saveSessions(sessions);
+}
 
 /** Serialization guard — only one restart runs at a time; late callers get the latest config. */
 let pendingRestart: { promise: Promise<void>; config: WebServerConfig } | null = null;
@@ -330,7 +388,7 @@ function parseCookies(req: http.IncomingMessage): Record<string, string> {
 function hasValidSession(req: http.IncomingMessage): boolean {
   const cookies = parseCookies(req);
   const token = cookies[__BRAND_APP_SLUG + '_session'];
-  return Boolean(token && sessionTokens.has(token));
+  return Boolean(token && hasSession(token));
 }
 
 function isAuthenticated(
@@ -468,11 +526,11 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
           const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
           if (body.username?.toLowerCase() === config.auth.username.toLowerCase() && body.password === config.auth.password) {
             const token = crypto.randomUUID();
-            sessionTokens.add(token);
+            addSession(token, Date.now() + SESSION_LIFETIME_MS);
             const secure = config.tls?.enabled ? '; Secure' : '';
             res.writeHead(200, {
               'Content-Type': 'application/json',
-              'Set-Cookie': `${__BRAND_APP_SLUG}_session=${token}; HttpOnly; Path=/; SameSite=Strict${secure}`,
+              'Set-Cookie': `${__BRAND_APP_SLUG}_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${SESSION_MAX_AGE_SECS}${secure}`,
             });
             res.end(JSON.stringify({ ok: true }));
           } else {
@@ -498,27 +556,16 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
     if (urlPath === '/api/token-login') {
       const fullUrl = new URL(req.url ?? '/', `http://${req.headers.host || 'localhost'}`);
       const loginToken = fullUrl.searchParams.get('token');
-      if (loginToken && sessionTokens.has(loginToken)) {
-        // Check expiry
-        const expiry = tokenExpiry.get(loginToken);
-        if (expiry && Date.now() > expiry) {
-          // Token expired — clean up and redirect to login
-          sessionTokens.delete(loginToken);
-          tokenExpiry.delete(loginToken);
-          res.writeHead(302, { Location: '/login' });
-          res.end();
-          return;
-        }
+      if (loginToken && hasSession(loginToken)) {
         // Consume the token (one-time use)
-        sessionTokens.delete(loginToken);
-        tokenExpiry.delete(loginToken);
+        deleteSession(loginToken);
         // Issue a fresh session cookie
         const sessionToken = crypto.randomUUID();
-        sessionTokens.add(sessionToken);
+        addSession(sessionToken, Date.now() + SESSION_LIFETIME_MS);
         const secure = config.tls?.enabled ? '; Secure' : '';
         res.writeHead(302, {
           Location: '/',
-          'Set-Cookie': `${__BRAND_APP_SLUG}_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax${secure}`,
+          'Set-Cookie': `${__BRAND_APP_SLUG}_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECS}${secure}`,
         });
         res.end();
       } else {
@@ -765,10 +812,6 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
 }
 
 export async function stopWebServer(): Promise<void> {
-  // Clear all sessions and token expiry
-  sessionTokens.clear();
-  tokenExpiry.clear();
-
   // Close all web client connections
   for (const ws of webClients) {
     try { ws.close(); } catch { /* ignore */ }
@@ -799,8 +842,7 @@ export async function stopWebServer(): Promise<void> {
 export function createLoginToken(): string | null {
   if (!httpServer) return null;
   const token = crypto.randomUUID();
-  sessionTokens.add(token);
-  tokenExpiry.set(token, Date.now() + TOKEN_LIFETIME_MS);
+  addSession(token, Date.now() + LOGIN_TOKEN_LIFETIME_MS);
   return token;
 }
 
