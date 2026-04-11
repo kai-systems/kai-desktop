@@ -184,6 +184,7 @@ const appAPI = {
 
   webServer: {
     getLanAddresses: () => ipcRenderer.invoke('webServer:lan-addresses') as Promise<string[]>,
+    createToken: () => ipcRenderer.invoke('webServer:create-token') as Promise<string | null>,
   },
 
   fs: {

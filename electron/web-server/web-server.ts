@@ -8,7 +8,6 @@ import { webClients } from './web-clients.js';
 import { invokeHandler } from './ipc-bridge.js';
 import { ensureSelfSignedCert } from './self-signed.js';
 import { getLoginPageHtml } from './login-page.js';
-import { publishMdns, unpublishMdns } from './mdns.js';
 
 interface WebServerConfig {
   enabled: boolean;
@@ -24,18 +23,19 @@ interface WebServerConfig {
     username: string;
     password: string;
   };
-  mdns?: {
-    enabled: boolean;
-  };
 }
 
 let httpServer: http.Server | https.Server | null = null;
 let wss: WebSocketServer | null = null;
-/** Secondary plain-HTTP server for mobile clients when primary uses self-signed TLS */
-let mobileHttpServer: http.Server | null = null;
 
 /** Active session tokens for cookie-based auth. Cleared on server restart. */
 const sessionTokens = new Set<string>();
+
+/** Token expiry timestamps (token -> expiry epoch ms). */
+const tokenExpiry = new Map<string, number>();
+
+/** Default token lifetime: 5 minutes. */
+const TOKEN_LIFETIME_MS = 5 * 60 * 1000;
 
 /** Serialization guard — only one restart runs at a time; late callers get the latest config. */
 let pendingRestart: { promise: Promise<void>; config: WebServerConfig } | null = null;
@@ -219,7 +219,8 @@ function getBridgeScript(): string {
       homedir: function() { return invoke('platform:homedir'); }
     },
     webServer: {
-      getLanAddresses: function() { return invoke('webServer:lan-addresses'); }
+      getLanAddresses: function() { return invoke('webServer:lan-addresses'); },
+      createToken: function() { return invoke('webServer:create-token'); }
     },
     fs: {
       listDirectory: function(dirPath) { return invoke('fs:list-directory', dirPath); }
@@ -317,34 +318,7 @@ function isAuthenticated(
 }
 
 /** Routes that bypass auth so the login page and its API work. */
-const AUTH_EXEMPT_PATHS = new Set(['/login', '/api/login', '/api/auth-status']);
-
-/**
- * Check if a WebSocket upgrade request has valid credentials via URL userinfo.
- * Mobile clients (React Native) can't set custom headers or cookies on WebSocket,
- * so they encode credentials in the URL: ws://user:pass@host:port/ws
- */
-function hasUrlCredentials(
-  req: http.IncomingMessage,
-  config: WebServerConfig,
-): boolean {
-  try {
-    const host = req.headers.host || 'localhost';
-    const protocol = config.tls?.enabled ? 'https' : 'http';
-    const fullUrl = new URL(req.url ?? '/', `${protocol}://${host}`);
-    // Check the Authorization header which Node populates from URL userinfo
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith('Basic ')) {
-      const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
-      const [user, ...passParts] = decoded.split(':');
-      const pass = passParts.join(':');
-      return user === config.auth.username && pass === config.auth.password;
-    }
-  } catch {
-    // Ignore malformed URLs
-  }
-  return false;
-}
+const AUTH_EXEMPT_PATHS = new Set(['/login', '/api/login', '/api/auth-status', '/api/token-login']);
 
 function getRendererDir(): string {
   return join(__dirname, '../renderer');
@@ -496,6 +470,40 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
       return;
     }
 
+    // Token-based auto-login (for QR code scanning)
+    if (urlPath === '/api/token-login') {
+      const fullUrl = new URL(req.url ?? '/', `http://${req.headers.host || 'localhost'}`);
+      const loginToken = fullUrl.searchParams.get('token');
+      if (loginToken && sessionTokens.has(loginToken)) {
+        // Check expiry
+        const expiry = tokenExpiry.get(loginToken);
+        if (expiry && Date.now() > expiry) {
+          // Token expired — clean up and redirect to login
+          sessionTokens.delete(loginToken);
+          tokenExpiry.delete(loginToken);
+          res.writeHead(302, { Location: '/login' });
+          res.end();
+          return;
+        }
+        // Consume the token (one-time use)
+        sessionTokens.delete(loginToken);
+        tokenExpiry.delete(loginToken);
+        // Issue a fresh session cookie
+        const sessionToken = crypto.randomUUID();
+        sessionTokens.add(sessionToken);
+        const secure = config.tls?.enabled ? '; Secure' : '';
+        res.writeHead(302, {
+          Location: '/',
+          'Set-Cookie': `kai_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax${secure}`,
+        });
+        res.end();
+      } else {
+        res.writeHead(302, { Location: '/login' });
+        res.end();
+      }
+      return;
+    }
+
     // --- Auth check (skip for login page) ---
 
     if (!AUTH_EXEMPT_PATHS.has(urlPath) && !isAuthenticated(req, config)) {
@@ -556,7 +564,7 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
     ? https.createServer({ cert: tlsOptions.cert, key: tlsOptions.key }, requestHandler)
     : http.createServer(requestHandler);
 
-  // WebSocket server — shared between primary and mobile HTTP servers
+  // WebSocket server
   wss = new WebSocketServer({ noServer: true });
 
   const handleUpgrade = (req: http.IncomingMessage, socket: import('stream').Duplex, head: Buffer) => {
@@ -565,9 +573,9 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
       return;
     }
 
-    // Auth check for WebSocket (cookies or URL credentials for mobile clients)
+    // Auth check for WebSocket (cookies)
     if (config.auth.mode === 'password') {
-      if (!hasValidSession(req) && !hasUrlCredentials(req, config)) {
+      if (!hasValidSession(req)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -644,52 +652,15 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
       reject(err);
     });
     httpServer!.listen(config.port, () => {
-      // When using self-signed TLS, start a secondary plain-HTTP server on port+1
-      // so mobile clients (which can't bypass cert validation) can connect.
-      if (tlsOptions && config.tls?.mode === 'self-signed' && config.mdns?.enabled !== false) {
-        const mobilePort = config.port + 1;
-        mobileHttpServer = http.createServer(requestHandler);
-        mobileHttpServer.on('upgrade', handleUpgrade);
-        mobileHttpServer.listen(mobilePort, () => {
-          console.info(`[WebServer] Mobile HTTP fallback listening on port ${mobilePort}`);
-        });
-        mobileHttpServer.on('error', (err) => {
-          console.warn(`[WebServer] Mobile HTTP fallback failed on port ${mobilePort}:`, err.message);
-          mobileHttpServer = null;
-        });
-      }
-
-      // Publish mDNS service for Kai Mobile discovery
-      if (config.mdns?.enabled !== false) {
-        try {
-          const { app } = require('electron');
-          // Advertise the mobile-friendly port (plain HTTP) when available
-          const advertisePort = (mobileHttpServer ? config.port + 1 : config.port);
-          publishMdns(advertisePort, config.auth.mode, app.getVersion());
-        } catch {
-          // mDNS publish is best-effort
-        }
-      }
       resolve();
     });
   });
 }
 
 export async function stopWebServer(): Promise<void> {
-  // Unpublish mDNS service
-  unpublishMdns();
-
-  // Stop the mobile HTTP fallback server
-  if (mobileHttpServer) {
-    try {
-      mobileHttpServer.closeAllConnections();
-      mobileHttpServer.close();
-    } catch { /* ignore */ }
-    mobileHttpServer = null;
-  }
-
-  // Clear all sessions
+  // Clear all sessions and token expiry
   sessionTokens.clear();
+  tokenExpiry.clear();
 
   // Close all web client connections
   for (const ws of webClients) {
@@ -711,6 +682,19 @@ export async function stopWebServer(): Promise<void> {
       server.closeAllConnections();
     });
   }
+}
+
+/**
+ * Create a one-time-use login token for QR code auto-login.
+ * The token expires after 5 minutes.
+ * Returns the token string, or null if the server isn't running.
+ */
+export function createLoginToken(): string | null {
+  if (!httpServer) return null;
+  const token = crypto.randomUUID();
+  sessionTokens.add(token);
+  tokenExpiry.set(token, Date.now() + TOKEN_LIFETIME_MS);
+  return token;
 }
 
 export async function restartWebServer(config: WebServerConfig): Promise<void> {

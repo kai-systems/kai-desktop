@@ -16,9 +16,6 @@ type WebServerConfig = {
     username: string;
     password: string;
   };
-  mdns?: {
-    enabled: boolean;
-  };
 };
 
 export const WebServerSettings: FC<SettingsProps> = ({ config, updateConfig }) => {
@@ -27,7 +24,6 @@ export const WebServerSettings: FC<SettingsProps> = ({ config, updateConfig }) =
     port: 5243,
     tls: { enabled: true, mode: 'self-signed' as const, certPath: '', keyPath: '' },
     auth: { mode: 'anonymous' as const, username: '', password: '' },
-    mdns: { enabled: true },
   };
 
   const [showQR, setShowQR] = useState(false);
@@ -152,21 +148,16 @@ export const WebServerSettings: FC<SettingsProps> = ({ config, updateConfig }) =
           </fieldset>
 
           <fieldset className="rounded-lg border p-3 space-y-3">
-            <legend className="text-xs font-semibold px-1">Mobile Access</legend>
-            <Toggle
-              label="Enable network discovery (mDNS/Bonjour)"
-              checked={ws.mdns?.enabled !== false}
-              onChange={(v) => updateConfig('webServer.mdns.enabled', v)}
-            />
+            <legend className="text-xs font-semibold px-1">Remote Access</legend>
             <p className="text-[10px] text-muted-foreground">
-              Allows Kai Mobile to automatically find this computer on the local network.
+              Scan the QR code from a phone or tablet to open the web UI with auto-login.
             </p>
 
             <button
               className="w-full rounded-xl border border-border/60 bg-card/60 px-3 py-2 text-xs hover:bg-card transition-colors"
               onClick={() => setShowQR(true)}
             >
-              Show QR Code for Mobile
+              Show QR Code
             </button>
           </fieldset>
         </>

@@ -733,6 +733,21 @@ function useConstellationCanvas() {
       const container = canvas.parentElement;
       const width = container?.offsetWidth ?? window.innerWidth;
       const height = container?.offsetHeight ?? window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+
+      /* If the container grew beyond the canvas buffer, resize immediately
+         so the full area is rendered without waiting for a resize event. */
+      const needW = Math.floor(width * dpr);
+      const needH = Math.floor(height * dpr);
+      if (canvas.width < needW || canvas.height < needH) {
+        canvas.width = needW;
+        canvas.height = needH;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.scale(dpr, dpr);
+      }
+
       const styles = getComputedStyle(document.documentElement);
       tick += 1;
 

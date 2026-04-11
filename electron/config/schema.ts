@@ -366,9 +366,6 @@ const webServerConfigSchema = z.object({
     username: z.string(),
     password: z.string(),
   }),
-  mdns: z.object({
-    enabled: z.boolean(),
-  }).optional(),
 });
 
 export const appConfigSchema = z.object({
