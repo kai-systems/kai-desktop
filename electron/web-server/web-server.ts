@@ -3,6 +3,7 @@ import http from 'http';
 import https from 'https';
 import { join, extname } from 'path';
 import { readFileSync, existsSync, statSync } from 'fs';
+import type { Duplex } from 'stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { webClients } from './web-clients.js';
 import { invokeHandler } from './ipc-bridge.js';
@@ -567,7 +568,7 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
   // WebSocket server
   wss = new WebSocketServer({ noServer: true });
 
-  const handleUpgrade = (req: http.IncomingMessage, socket: import('stream').Duplex, head: Buffer) => {
+  const handleUpgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
     if (req.url !== '/ws') {
       socket.destroy();
       return;
