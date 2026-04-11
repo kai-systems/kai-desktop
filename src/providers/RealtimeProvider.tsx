@@ -69,7 +69,8 @@ export type RealtimeCallState = {
   isInCall: boolean;
   status: RealtimeCallStatus;
   isSpeaking: boolean;       // User is speaking (VAD)
-  isResponding: boolean;     // AI is generating a response
+  isProcessing: boolean;     // AI is processing user input (between speech end and response start)
+  isResponding: boolean;     // AI is generating/playing a response
   duration: number;          // Seconds since call started
   error?: string;
   silenceCountdown?: number; // Seconds until auto-end (shown when >75% of timeout elapsed)
@@ -89,6 +90,7 @@ const defaultState: RealtimeCallState = {
   isInCall: false,
   status: 'idle',
   isSpeaking: false,
+  isProcessing: false,
   isResponding: false,
   duration: 0,
 };
@@ -125,6 +127,7 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
   const startTimeRef = useRef<number>(0);
   const lastUserSpeechRef = useRef<number>(0);
   const callActiveRef = useRef(false);
+  const responseDonePendingRef = useRef(false); // response-done received but audio still playing
   const muteSilenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const browserMicRef = useRef<{ stream: MediaStream; ctx: AudioContext; processor: ScriptProcessorNode } | null>(null);
   const isWebBridge = Boolean((window as unknown as Record<string, unknown>).app && (window.app as Record<string, unknown>).__isWebBridge);
@@ -202,6 +205,7 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
     setOutputLevel(0);
     setIsMuted(false);
     mutedRef.current = false;
+    responseDonePendingRef.current = false;
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -254,6 +258,7 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
       isInCall: true,
       status: 'preparing',
       isSpeaking: false,
+      isProcessing: false,
       isResponding: false,
       duration: 0,
     });
@@ -409,10 +414,15 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
         setCallState((prev) => ({ ...prev, duration: elapsed }));
       }, 1000);
 
-      // Output level polling
+      // Output level polling + deferred response-done handling
       levelTimerRef.current = setInterval(() => {
         if (playerRef.current) {
           setOutputLevel(playerRef.current.getLevel());
+          // If response-done fired while audio was still playing, clear isResponding now
+          if (responseDonePendingRef.current && !playerRef.current.playing) {
+            responseDonePendingRef.current = false;
+            setCallState((prev) => prev.isResponding ? { ...prev, isResponding: false } : prev);
+          }
         }
       }, 66); // ~15fps
 
@@ -455,6 +465,7 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
         isInCall: false,
         status: 'error',
         isSpeaking: false,
+        isProcessing: false,
         isResponding: false,
         duration: 0,
         error: msg,
@@ -473,6 +484,7 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
       isInCall: false,
       status: 'idle',
       isSpeaking: false,
+      isProcessing: false,
       isResponding: false,
       duration: 0,
     });
@@ -581,20 +593,33 @@ export const RealtimeProvider: FC<PropsWithChildren> = ({ children }) => {
             lastUserSpeechRef.current = Date.now();
             // Barge-in: stop AI audio playback immediately when user starts speaking
             playerRef.current?.stop();
+            responseDonePendingRef.current = false;
           }
           setCallState((prev) => ({
             ...prev,
             isSpeaking: speaking,
+            // Clear isResponding on barge-in (user started speaking over AI)
+            isResponding: speaking ? false : prev.isResponding,
+            // When user stops speaking, enter processing state (waiting for AI response)
+            isProcessing: !speaking && !prev.isResponding,
             silenceCountdown: speaking ? undefined : prev.silenceCountdown,
           }));
           break;
         }
 
         case 'response-started':
-          setCallState((prev) => ({ ...prev, isResponding: true }));
+          responseDonePendingRef.current = false;
+          setCallState((prev) => ({ ...prev, isResponding: true, isProcessing: false, isSpeaking: false }));
           break;
 
         case 'response-done':
+          // Don't immediately clear isResponding — audio may still be playing back.
+          // The level-polling interval will clear it once playback finishes.
+          if (playerRef.current?.playing) {
+            responseDonePendingRef.current = true;
+            break;
+          }
+          responseDonePendingRef.current = false;
           setCallState((prev) => ({ ...prev, isResponding: false }));
           break;
 

@@ -183,9 +183,11 @@ export const CallOverlay: FC = () => {
     ? 'Speaking...'
     : callState.isResponding
       ? 'AI responding...'
-      : 'Listening...';
+      : callState.isProcessing
+        ? 'Processing...'
+        : 'Listening...';
 
-  const statusPulse = callState.isSpeaking || callState.isResponding;
+  const statusPulse = callState.isSpeaking || callState.isResponding || callState.isProcessing;
 
   return (
     <div className="relative z-20 border-t border-border/70 bg-background/88 px-3 pb-3 pt-3 backdrop-blur-md md:px-6 md:pb-6 md:pt-4">
@@ -238,14 +240,17 @@ export const CallOverlay: FC = () => {
 
           {/* Row 3: Speaking status + End Call */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <span
-                className={`text-xs font-medium ${statusPulse ? 'animate-pulse' : ''} ${
+                key={statusText}
+                className={`text-xs font-medium whitespace-nowrap ${statusPulse ? 'animate-pulse' : ''} ${
                   callState.isSpeaking
                     ? 'text-emerald-500'
                     : callState.isResponding
                       ? 'text-primary'
-                      : 'text-muted-foreground'
+                      : callState.isProcessing
+                        ? 'text-amber-500'
+                        : 'text-muted-foreground'
                 }`}
               >
                 {statusText}
