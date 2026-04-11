@@ -2,6 +2,23 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { app } from '@/lib/ipc-client';
 import { registerPluginComponents, type PluginComponent } from '@/components/plugins/PluginComponentRegistry';
 
+const isWebBridge = Boolean(
+  (window as unknown as Record<string, unknown>).app &&
+    (window.app as Record<string, unknown>).__isWebBridge,
+);
+
+/**
+ * Rewrite plugin-renderer:// protocol URLs to /plugin-renderer/ HTTP paths
+ * when running in web mode so they are served by the web server.
+ */
+function rewritePluginUrl(url: string): string {
+  if (!isWebBridge) return url;
+  const prefix = 'plugin-renderer://';
+  if (!url.startsWith(prefix)) return url;
+  // plugin-renderer://pluginName/fileHash/path → /plugin-renderer/pluginName/fileHash/path
+  return '/plugin-renderer/' + url.slice(prefix.length);
+}
+
 type PluginBannerDescriptor = {
   id: string;
   pluginName: string;
@@ -212,7 +229,7 @@ function loadPluginRendererScripts(
     onStatusChange(pluginName, 'loading', null);
 
     try {
-      import(/* @vite-ignore */ entryUrl)
+      import(/* @vite-ignore */ rewritePluginUrl(entryUrl))
         .then((mod) => {
           if (typeof mod.register === 'function') {
             mod.register({
@@ -262,7 +279,7 @@ function applyPluginRendererStyles(
         linkElement.rel = 'stylesheet';
         document.head.appendChild(linkElement);
       }
-      linkElement.href = styleUrl;
+      linkElement.href = rewritePluginUrl(styleUrl);
       continue;
     }
 

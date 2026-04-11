@@ -82,6 +82,9 @@ const MIME_TYPES: Record<string, string> = {
 /** Base directory where generated media files are stored. */
 const MEDIA_DIR = join(homedir(), '.' + __BRAND_APP_SLUG, 'media');
 
+/** Base directory where compiled plugin renderer bundles are cached. */
+const PLUGIN_RENDERERS_DIR = join(homedir(), '.' + __BRAND_APP_SLUG, 'plugin-renderers');
+
 /**
  * Client-side bridge script injected into the HTML served to web clients.
  * Defines `window.app` backed by a WebSocket connection instead of Electron IPC.
@@ -571,6 +574,47 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
 
       // Security: ensure the resolved path is under the media directory
       if (!filePath.startsWith(MEDIA_DIR)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+
+      if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+        return;
+      }
+
+      const ext = extname(filePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+      const data = readFileSync(filePath);
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': data.byteLength,
+        'Cache-Control': 'no-cache',
+      });
+      res.end(data);
+      return;
+    }
+
+    // --- Serve plugin renderer bundles (compiled JS, CSS, assets) ---
+    if (urlPath.startsWith('/plugin-renderer/')) {
+      // URL format: /plugin-renderer/<pluginName>/<fileHash>/<assetPath>
+      const segments = urlPath.slice('/plugin-renderer/'.length).split('/').map(decodeURIComponent);
+      const [pluginName, fileHash, ...assetParts] = segments;
+      const assetPath = assetParts.join('/');
+
+      if (!pluginName || !fileHash || !assetPath) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad Request');
+        return;
+      }
+
+      const expectedRoot = join(PLUGIN_RENDERERS_DIR, pluginName, fileHash);
+      const filePath = join(expectedRoot, assetPath);
+
+      // Security: ensure the resolved path is under the expected plugin cache root
+      if (!filePath.startsWith(expectedRoot + '/') && filePath !== expectedRoot) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('Forbidden');
         return;
