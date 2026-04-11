@@ -29,6 +29,17 @@ interface WebServerConfig {
 let httpServer: http.Server | https.Server | null = null;
 let wss: WebSocketServer | null = null;
 
+/** Cached favicon PNG read from build/icon.png at module load. */
+const APP_ICON_PATH = join(__dirname, '../../build/icon.png');
+let faviconBuffer: Buffer | null = null;
+try {
+  if (existsSync(APP_ICON_PATH)) {
+    faviconBuffer = readFileSync(APP_ICON_PATH);
+  }
+} catch {
+  // Favicon not available — non-fatal.
+}
+
 /** Active session tokens for cookie-based auth. Cleared on server restart. */
 const sessionTokens = new Set<string>();
 
@@ -291,7 +302,8 @@ function getBridgeScript(): string {
 
   connect();
 })();
-</script>`;
+</script>
+<link rel="icon" type="image/png" href="/favicon.png">`;
 }
 
 function parseCookies(req: http.IncomingMessage): Record<string, string> {
@@ -319,7 +331,7 @@ function isAuthenticated(
 }
 
 /** Routes that bypass auth so the login page and its API work. */
-const AUTH_EXEMPT_PATHS = new Set(['/login', '/api/login', '/api/auth-status', '/api/token-login']);
+const AUTH_EXEMPT_PATHS = new Set(['/login', '/api/login', '/api/auth-status', '/api/token-login', '/favicon.ico', '/favicon.png']);
 
 function getRendererDir(): string {
   return join(__dirname, '../renderer');
@@ -502,6 +514,18 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
         res.writeHead(302, { Location: '/login' });
         res.end();
       }
+      return;
+    }
+
+    // --- Favicon ---
+
+    if ((urlPath === '/favicon.ico' || urlPath === '/favicon.png') && faviconBuffer) {
+      res.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': faviconBuffer.byteLength,
+        'Cache-Control': 'public, max-age=86400',
+      });
+      res.end(faviconBuffer);
       return;
     }
 
