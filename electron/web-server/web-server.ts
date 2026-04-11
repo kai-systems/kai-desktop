@@ -722,8 +722,49 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
   wss = new WebSocketServer({ noServer: true });
 
   const handleUpgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (req.url !== '/ws') {
-      socket.destroy();
+    const upgradePath = (req.url ?? '/').split('?')[0];
+
+    if (upgradePath !== '/ws') {
+      // In dev mode, proxy non-app WebSocket upgrades (e.g. Vite HMR) to
+      // the Vite dev server so hot-reload works through the web UI.
+      if (viteDevUrl) {
+        const viteTarget = new URL(req.url ?? '/', viteDevUrl);
+        const viteReq = http.request({
+          hostname: viteTarget.hostname,
+          port: viteTarget.port,
+          path: viteTarget.pathname + viteTarget.search,
+          method: 'GET',
+          headers: {
+            ...req.headers,
+            host: viteTarget.host,
+          },
+        });
+        viteReq.on('upgrade', (_res, viteSocket, viteHead) => {
+          // Forward any leading bytes from Vite
+          if (viteHead.length) socket.write(viteHead);
+          // Replay the 101 response back to the client — Vite's response is
+          // already sitting in viteSocket's internal buffer, but the HTTP
+          // upgrade event fires *after* the 101 has been consumed. We need to
+          // reconstruct the 101 Switching Protocols response for the client.
+          // The simplest way: build it from _res headers.
+          const statusLine = `HTTP/1.1 ${_res.statusCode} ${_res.statusMessage}\r\n`;
+          const headers = Object.entries(_res.headers)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join('\r\n');
+          socket.write(statusLine + headers + '\r\n\r\n');
+          // Bi-directional pipe
+          socket.pipe(viteSocket);
+          viteSocket.pipe(socket);
+          socket.on('error', () => viteSocket.destroy());
+          viteSocket.on('error', () => socket.destroy());
+          socket.on('close', () => viteSocket.destroy());
+          viteSocket.on('close', () => socket.destroy());
+        });
+        viteReq.on('error', () => socket.destroy());
+        viteReq.end();
+      } else {
+        socket.destroy();
+      }
       return;
     }
 
