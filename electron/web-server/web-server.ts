@@ -8,6 +8,7 @@ import { webClients } from './web-clients.js';
 import { invokeHandler } from './ipc-bridge.js';
 import { ensureSelfSignedCert } from './self-signed.js';
 import { getLoginPageHtml } from './login-page.js';
+import { publishMdns, unpublishMdns } from './mdns.js';
 
 interface WebServerConfig {
   enabled: boolean;
@@ -23,10 +24,15 @@ interface WebServerConfig {
     username: string;
     password: string;
   };
+  mdns?: {
+    enabled: boolean;
+  };
 }
 
 let httpServer: http.Server | https.Server | null = null;
 let wss: WebSocketServer | null = null;
+/** Secondary plain-HTTP server for mobile clients when primary uses self-signed TLS */
+let mobileHttpServer: http.Server | null = null;
 
 /** Active session tokens for cookie-based auth. Cleared on server restart. */
 const sessionTokens = new Set<string>();
@@ -212,6 +218,9 @@ function getBridgeScript(): string {
     platform: {
       homedir: function() { return invoke('platform:homedir'); }
     },
+    webServer: {
+      getLanAddresses: function() { return invoke('webServer:lan-addresses'); }
+    },
     fs: {
       listDirectory: function(dirPath) { return invoke('fs:list-directory', dirPath); }
     },
@@ -309,6 +318,33 @@ function isAuthenticated(
 
 /** Routes that bypass auth so the login page and its API work. */
 const AUTH_EXEMPT_PATHS = new Set(['/login', '/api/login', '/api/auth-status']);
+
+/**
+ * Check if a WebSocket upgrade request has valid credentials via URL userinfo.
+ * Mobile clients (React Native) can't set custom headers or cookies on WebSocket,
+ * so they encode credentials in the URL: ws://user:pass@host:port/ws
+ */
+function hasUrlCredentials(
+  req: http.IncomingMessage,
+  config: WebServerConfig,
+): boolean {
+  try {
+    const host = req.headers.host || 'localhost';
+    const protocol = config.tls?.enabled ? 'https' : 'http';
+    const fullUrl = new URL(req.url ?? '/', `${protocol}://${host}`);
+    // Check the Authorization header which Node populates from URL userinfo
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Basic ')) {
+      const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
+      const [user, ...passParts] = decoded.split(':');
+      const pass = passParts.join(':');
+      return user === config.auth.username && pass === config.auth.password;
+    }
+  } catch {
+    // Ignore malformed URLs
+  }
+  return false;
+}
 
 function getRendererDir(): string {
   return join(__dirname, '../renderer');
@@ -520,18 +556,18 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
     ? https.createServer({ cert: tlsOptions.cert, key: tlsOptions.key }, requestHandler)
     : http.createServer(requestHandler);
 
-  // WebSocket server
+  // WebSocket server — shared between primary and mobile HTTP servers
   wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on('upgrade', (req, socket, head) => {
+  const handleUpgrade = (req: http.IncomingMessage, socket: import('stream').Duplex, head: Buffer) => {
     if (req.url !== '/ws') {
       socket.destroy();
       return;
     }
 
-    // Auth check for WebSocket (cookies are sent automatically, unlike Basic Auth)
+    // Auth check for WebSocket (cookies or URL credentials for mobile clients)
     if (config.auth.mode === 'password') {
-      if (!hasValidSession(req)) {
+      if (!hasValidSession(req) && !hasUrlCredentials(req, config)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -541,10 +577,25 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
     wss!.handleUpgrade(req, socket, head, (ws) => {
       wss!.emit('connection', ws, req);
     });
-  });
+  };
+
+  httpServer.on('upgrade', handleUpgrade);
 
   wss.on('connection', (ws: WebSocket) => {
     webClients.add(ws);
+
+    // Heartbeat: ping every 30s, terminate if no pong within 10s
+    let alive = true;
+    ws.on('pong', () => { alive = true; });
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        clearInterval(heartbeat);
+        ws.terminate();
+        return;
+      }
+      alive = false;
+      ws.ping();
+    }, 30000);
 
     ws.on('message', async (raw: Buffer | string) => {
       let msg: { id?: string; type?: string; channel?: string; args?: unknown[]; data?: unknown };
@@ -578,10 +629,12 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
     });
 
     ws.on('close', () => {
+      clearInterval(heartbeat);
       webClients.delete(ws);
     });
 
     ws.on('error', () => {
+      clearInterval(heartbeat);
       webClients.delete(ws);
     });
   });
@@ -591,12 +644,50 @@ export async function startWebServer(config: WebServerConfig): Promise<void> {
       reject(err);
     });
     httpServer!.listen(config.port, () => {
+      // When using self-signed TLS, start a secondary plain-HTTP server on port+1
+      // so mobile clients (which can't bypass cert validation) can connect.
+      if (tlsOptions && config.tls?.mode === 'self-signed' && config.mdns?.enabled !== false) {
+        const mobilePort = config.port + 1;
+        mobileHttpServer = http.createServer(requestHandler);
+        mobileHttpServer.on('upgrade', handleUpgrade);
+        mobileHttpServer.listen(mobilePort, () => {
+          console.info(`[WebServer] Mobile HTTP fallback listening on port ${mobilePort}`);
+        });
+        mobileHttpServer.on('error', (err) => {
+          console.warn(`[WebServer] Mobile HTTP fallback failed on port ${mobilePort}:`, err.message);
+          mobileHttpServer = null;
+        });
+      }
+
+      // Publish mDNS service for Kai Mobile discovery
+      if (config.mdns?.enabled !== false) {
+        try {
+          const { app } = require('electron');
+          // Advertise the mobile-friendly port (plain HTTP) when available
+          const advertisePort = (mobileHttpServer ? config.port + 1 : config.port);
+          publishMdns(advertisePort, config.auth.mode, app.getVersion());
+        } catch {
+          // mDNS publish is best-effort
+        }
+      }
       resolve();
     });
   });
 }
 
 export async function stopWebServer(): Promise<void> {
+  // Unpublish mDNS service
+  unpublishMdns();
+
+  // Stop the mobile HTTP fallback server
+  if (mobileHttpServer) {
+    try {
+      mobileHttpServer.closeAllConnections();
+      mobileHttpServer.close();
+    } catch { /* ignore */ }
+    mobileHttpServer = null;
+  }
+
   // Clear all sessions
   sessionTokens.clear();
 
@@ -630,22 +721,28 @@ export async function restartWebServer(config: WebServerConfig): Promise<void> {
     return pendingRestart.promise;
   }
 
-  const doRestart = async (): Promise<void> => {
+  // Assign pendingRestart BEFORE calling doRestart so the async function
+  // can read it synchronously on its first iteration.
+  const entry: { promise: Promise<void>; config: WebServerConfig } = {
+    promise: null as unknown as Promise<void>,
+    config,
+  };
+  pendingRestart = entry;
+
+  entry.promise = (async () => {
     try {
       // Loop until the queued config is stable (no new config arrived during restart)
       while (true) {
-        const target = pendingRestart!.config;
+        const target = entry.config;
         await stopWebServer();
         await startWebServer(target);
         // If config hasn't changed while we were restarting, we're done
-        if (pendingRestart!.config === target) break;
+        if (entry.config === target) break;
       }
     } finally {
       pendingRestart = null;
     }
-  };
+  })();
 
-  const promise = doRestart();
-  pendingRestart = { promise, config };
-  return promise;
+  return entry.promise;
 }

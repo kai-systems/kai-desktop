@@ -6,6 +6,7 @@ import { appConfigSchema, type AppConfig } from '../config/schema.js';
 import { broadcastToAllWindows } from '../utils/window-send.js';
 import { binaryExists } from '../tools/cli-tools.js';
 import { primeResolvedShellPath } from '../utils/shell-env.js';
+import { getLanAddresses } from '../web-server/network.js';
 
 export type { AppConfig } from '../config/schema.js';
 
@@ -111,6 +112,7 @@ function getDefaultConfig() {
       port: 5243,
       tls: { enabled: true, mode: 'self-signed' as const, certPath: '', keyPath: '' },
       auth: { mode: 'anonymous' as const, username: '', password: '' },
+      mdns: { enabled: true },
     },
     audio: {
       provider: 'native' as const,
@@ -814,6 +816,10 @@ export function registerConfigHandlers(
   });
 
   ipcMain.handle('platform:homedir', () => appHome);
+
+  ipcMain.handle('webServer:lan-addresses', () => {
+    return getLanAddresses();
+  });
 
   ipcMain.handle('cli-tools:check-binaries', async (_event, binaryNames: string[]) => {
     await primeResolvedShellPath();

@@ -182,6 +182,10 @@ const appAPI = {
     homedir: () => ipcRenderer.invoke('platform:homedir'),
   },
 
+  webServer: {
+    getLanAddresses: () => ipcRenderer.invoke('webServer:lan-addresses') as Promise<string[]>,
+  },
+
   fs: {
     listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', dirPath) as Promise<{ path?: string; entries: Array<{ name: string; isDirectory: boolean }>; error?: string }>,
   },
