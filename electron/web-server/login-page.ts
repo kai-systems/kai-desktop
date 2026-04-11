@@ -12,54 +12,65 @@ export function getLoginPageHtml(): string {
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --brand-hue: ${__BRAND_THEME_HUE}; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #0a0a0b;
-    color: #e4e4e7;
+    background: oklch(0.15 0.006 var(--brand-hue));
+    background-image:
+      radial-gradient(circle at top, oklch(0.60 0.10 var(--brand-hue) / 14%), transparent 34%),
+      linear-gradient(180deg, oklch(0.12 0.006 var(--brand-hue) / 48%), transparent 24%);
+    color: oklch(0.95 0.008 var(--brand-hue));
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    padding: 1rem;
   }
   .card {
-    background: #18181b;
-    border: 1px solid #27272a;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012)),
+      linear-gradient(180deg, oklch(0.18 0.012 var(--brand-hue) / 38%), oklch(0.16 0.010 var(--brand-hue) / 26%));
+    border: 1px solid oklch(0.33 0.015 var(--brand-hue) / 34%);
     border-radius: 12px;
     padding: 2rem;
     width: 100%;
     max-width: 380px;
-    box-shadow: 0 4px 24px rgba(0,0,0,.4);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.05),
+      0 8px 24px oklch(0.08 0.006 var(--brand-hue) / 20%);
+    backdrop-filter: blur(22px) saturate(120%);
   }
   h1 {
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: .25rem;
+    color: oklch(0.95 0.008 var(--brand-hue));
   }
   .subtitle {
     font-size: .8rem;
-    color: #71717a;
+    color: oklch(0.73 0.012 var(--brand-hue));
     margin-bottom: 1.5rem;
   }
   label {
     display: block;
     font-size: .75rem;
     font-weight: 500;
-    color: #a1a1aa;
+    color: oklch(0.73 0.012 var(--brand-hue));
     margin-bottom: .25rem;
   }
   input {
     width: 100%;
     padding: .5rem .75rem;
-    font-size: .875rem;
+    font-size: 1rem;
     font-family: inherit;
-    background: #09090b;
-    border: 1px solid #27272a;
+    background: oklch(0.15 0.006 var(--brand-hue));
+    border: 1px solid oklch(0.33 0.015 var(--brand-hue) / 34%);
     border-radius: 6px;
-    color: #e4e4e7;
+    color: oklch(0.95 0.008 var(--brand-hue));
     outline: none;
     transition: border-color .15s;
   }
-  input:focus { border-color: #3b82f6; }
+  input:focus { border-color: oklch(0.84 0.085 var(--brand-hue)); }
   .field + .field { margin-top: .75rem; }
   button {
     margin-top: 1.25rem;
@@ -68,19 +79,19 @@ export function getLoginPageHtml(): string {
     font-size: .875rem;
     font-weight: 500;
     font-family: inherit;
-    background: #3b82f6;
-    color: #fff;
+    background: oklch(0.84 0.085 var(--brand-hue));
+    color: oklch(0.18 0.008 var(--brand-hue));
     border: none;
     border-radius: 6px;
     cursor: pointer;
-    transition: background .15s;
+    transition: background .15s, opacity .15s;
   }
-  button:hover { background: #2563eb; }
+  button:hover { background: oklch(0.78 0.09 var(--brand-hue)); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .error {
     margin-top: .75rem;
     font-size: .8rem;
-    color: #ef4444;
+    color: oklch(0.69 0.20 21);
     display: none;
   }
   .error.visible { display: block; }

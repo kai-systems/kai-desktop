@@ -79,7 +79,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({ selectedModelKey, onSele
 
       {isOpen && (
         <>
-          <div className={`absolute ${dropdownDirection === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'} right-0 z-50 w-[240px] rounded-2xl border border-border/70 bg-popover/95 p-1.5 shadow-[0_16px_40px_rgba(5,4,15,0.28)] backdrop-blur-xl`}>
+          <div className={`absolute ${dropdownDirection === 'down' ? 'top-full mt-2' : 'bottom-full mb-2'} left-0 md:left-auto md:right-0 z-50 w-[240px] rounded-2xl border border-border/70 bg-popover/95 p-1.5 shadow-[0_16px_40px_rgba(5,4,15,0.28)] backdrop-blur-xl`}>
             <div className="px-3 py-2 text-sm font-medium text-muted-foreground">Select model</div>
             <div className="max-h-[300px] overflow-y-auto">
               {models.map((model) => {
